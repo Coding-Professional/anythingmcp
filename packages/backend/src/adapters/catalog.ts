@@ -118,6 +118,7 @@ import * as freshchat from './intl/freshchat.json';
 import * as freshdesk from './intl/freshdesk.json';
 import * as freshservice from './intl/freshservice.json';
 import * as front from './intl/front.json';
+import * as fxmacrodata from './intl/fxmacrodata.json';
 import * as georgianRailway from './intl/georgian-railway.json';
 import * as ghost from './intl/ghost.json';
 import * as gitbook from './intl/gitbook.json';
@@ -278,6 +279,8 @@ import {
 import { computeAdapterVersion } from './catalog-fingerprint';
 import type { EnvVarMeta, SetupKind } from './env-var-meta';
 
+export type VerifyHint = string | { hint: string; suggest?: string };
+
 export interface AdapterMeta {
   slug: string;
   name: string;
@@ -332,6 +335,15 @@ export interface AdapterMeta {
    *  (label, secret or not, where to find it). Optional and partial: what is
    *  left out is derived from the name, see env-var-meta.ts. */
   envVarMeta?: Record<string, EnvVarMeta>;
+  /** What someone needs before starting the setup (an approved app, an admin,
+   *  a paid plan), in a sentence or two of Markdown. Shown above the form, so
+   *  nobody finds out halfway through. */
+  prerequisites?: string;
+  /** What to tell the user when the check fails, keyed by HTTP status ("404")
+   *  or failure kind ("auth_failed"); replaces the generic hint. `suggest`
+   *  names another adapter to offer instead (e.g. the JSON-RPC Odoo for an
+   *  instance older than 19). */
+  verifyHints?: Record<string, VerifyHint>;
   /** What setting it up involves; filled in by the adapters API. */
   setupKind?: SetupKind;
 }
@@ -561,6 +573,7 @@ const RAW_ADAPTERS: AdapterDefinition[] = [
   freshdesk as unknown as AdapterDefinition,
   freshservice as unknown as AdapterDefinition,
   front as unknown as AdapterDefinition,
+  fxmacrodata as unknown as AdapterDefinition,
   georgianRailway as unknown as AdapterDefinition,
   ghost as unknown as AdapterDefinition,
   gitbook as unknown as AdapterDefinition,
