@@ -1,7 +1,7 @@
 import { chmod, mkdir, open, rename, unlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export interface Profile {
@@ -13,7 +13,8 @@ export interface Profile {
 type Config = { profiles: Record<string, Profile> };
 
 export function configPath(env: NodeJS.ProcessEnv = process.env): string {
-  const base = env.XDG_CONFIG_HOME || join(homedir(), '.config');
+  const base = env.XDG_CONFIG_HOME && isAbsolute(env.XDG_CONFIG_HOME)
+    ? env.XDG_CONFIG_HOME : join(homedir(), '.config');
   return join(base, 'amcp', 'config.json');
 }
 
