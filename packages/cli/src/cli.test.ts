@@ -11,6 +11,73 @@ import { serverUrl } from './mcp.js';
 
 const execFileAsync = promisify(execFile);
 
+test('SSE calls allow slow tools, honor custom timeouts and paginate tool discovery', async () => {
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  let calls = 0;
+  const server = createServer(async (req, res) => {
+    if (req.method === 'GET') { res.writeHead(405); res.end(); return; }
+    if (req.method === 'DELETE') { res.writeHead(200); res.end(); return; }
+    let body = '';
+    for await (const chunk of req) body += chunk.toString();
+    const request = JSON.parse(body);
+    if (request.id === undefined) { res.writeHead(202); res.end(); return; }
+    let result: unknown;
+    if (request.method === 'initialize') {
+      result = { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'sse-fake', version: '1' } };
+    } else if (request.method === 'tools/list') {
+      result = request.params?.cursor === 'next'
+        ? { tools: [{ name: 'slow', inputSchema: { type: 'object' } }] }
+        : { tools: [{ name: 'first', inputSchema: { type: 'object' } }], nextCursor: 'next' };
+    } else if (request.method === 'tools/call') {
+      calls++;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => { timers.delete(timer); resolve(); }, request.params.arguments.delayMs ?? 65000);
+        timers.add(timer);
+        res.once('close', () => { clearTimeout(timer); timers.delete(timer); resolve(); });
+      });
+      if (res.destroyed) return;
+      result = { content: [{ type: 'text', text: 'Slow tool completed' }] };
+    } else { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n\n`);
+  });
+  server.listen(0, '127.0.0.1');
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing address');
+    const env = { ...process.env, AMCP_URL: `http://127.0.0.1:${address.port}`,
+      AMCP_SERVER: 'test', AMCP_API_KEY: 'mcp_sse-secret' };
+    const run = (args: string[]) => execFileAsync(process.execPath, [join(__dirname, 'index.js'), ...args], { env });
+    const listing = JSON.parse((await run(['tools', 'ls', '--json'])).stdout);
+    assert.deepEqual(listing.tools.map((tool: { name: string }) => tool.name), ['first', 'slow']);
+    for (const timeout of ['0', '-1', 'NaN', 'Infinity', '', '2147484']) {
+      await assert.rejects(run(['tools', 'call', 'slow', '--timeout', timeout, '--json']), (error: unknown) => {
+        const failure = error as { code: number; stderr: string };
+        assert.equal(failure.code, 2);
+        assert.match(JSON.parse(failure.stderr).error, /--timeout/);
+        return true;
+      });
+    }
+    assert.equal(calls, 0);
+    await assert.rejects(run(['tools', 'call', 'slow', '--timeout', '0.1', '--args', '{"delayMs":1000}', '--json']), (error: unknown) => {
+      const failure = error as { code: number; stdout: string; stderr: string };
+      assert.equal(failure.code, 4);
+      assert.equal(failure.stdout, '');
+      assert.deepEqual(JSON.parse(failure.stderr), { error: 'Tool call timed out after 0.1s', exitCode: 4 });
+      assert.doesNotMatch(failure.stderr, /mcp_sse-secret/);
+      return true;
+    });
+    assert.equal((await run(['tools', 'call', 'slow', '--timeout', '2', '--args', '{"delayMs":100}'])).stdout, 'Slow tool completed\n');
+    // A real 65-second response catches regression to the SDK's 60-second default.
+    assert.equal((await run(['tools', 'call', 'slow'])).stdout, 'Slow tool completed\n');
+  } finally {
+    for (const timer of timers) clearTimeout(timer);
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test('login verifies MCP tools and saves a private profile; tools ls and whoami hide the key', async () => {
   const requests: { method: string | undefined; path: string; key: string | undefined }[] = [];
   const server = createServer(async (req, res) => {
@@ -274,7 +341,14 @@ test('tools describe and call support JSON, files, stdin, failures and destructi
     assert.deepEqual(login, { loggedIn: true, profile: 'default', url: env.AMCP_URL, server: 'test' });
     const whoami = JSON.parse((await run(['whoami', '--json'])).stdout);
     assert.equal(whoami.server, 'test');
+    assert.equal(whoami.url, login.url);
+    assert.equal(whoami.endpoint, `${env.AMCP_URL}/mcp/test`);
     assert.doesNotMatch(JSON.stringify(whoami), /mcp_tool-secret/);
+    const prefixedLogin = JSON.parse((await run(['login', '--url', `${env.AMCP_URL}/gateway/`, '--profile', 'prefix', '--json'])).stdout);
+    const prefixedWhoami = JSON.parse((await run(['whoami', '--profile', 'prefix', '--json'])).stdout);
+    assert.equal(prefixedLogin.url, `${env.AMCP_URL}/gateway`);
+    assert.equal(prefixedWhoami.url, prefixedLogin.url);
+    assert.equal(prefixedWhoami.endpoint, `${env.AMCP_URL}/gateway/mcp/test`);
     const listing = JSON.parse((await run(['tools', 'ls', '--json'])).stdout);
     assert.deepEqual(listing.tools.map((tool: { name: string }) => tool.name), ['echo', 'fail', 'delete_record']);
     const described = JSON.parse((await run(['tools', 'describe', 'echo', '--json'])).stdout);

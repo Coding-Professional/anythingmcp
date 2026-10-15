@@ -14,6 +14,10 @@ function sameOrigin(url: string, storedUrl: string): boolean {
   catch { return false; }
 }
 
+function instanceUrl(profile: Profile): string {
+  return new URL(profile.url).toString().replace(/\/$/, '');
+}
+
 function print(value: unknown, json: boolean, plain: () => void): void {
   if (json) process.stdout.write(`${JSON.stringify(value)}\n`);
   else plain();
@@ -128,7 +132,7 @@ function usage(): string {
   amcp whoami [--profile <name>]
   amcp tools ls [--filter <text>] [--profile <name>]
   amcp tools describe <name> [--profile <name>]
-  amcp tools call <name> [--args '<json>' | --args @file.json | --args -] [--yes]
+  amcp tools call <name> [--args '<json>' | --args @file.json | --args -] [--yes] [--timeout <seconds>]
 
 Use --json for machine-readable output. For CI, set AMCP_URL, AMCP_SERVER and AMCP_API_KEY.
 The key is never accepted as a command argument.`;
@@ -143,6 +147,7 @@ export async function run(args = process.argv.slice(2)): Promise<number> {
         url: { type: 'string' }, server: { type: 'string' }, profile: { type: 'string' },
         'key-stdin': { type: 'boolean' }, filter: { type: 'string' }, help: { type: 'boolean', short: 'h' },
         args: { type: 'string' }, yes: { type: 'boolean' }, json: { type: 'boolean' },
+        timeout: { type: 'string' },
       },
       allowPositionals: true,
     });
@@ -155,6 +160,14 @@ export async function run(args = process.argv.slice(2)): Promise<number> {
     try { name = profileName(values.profile || 'default'); }
     catch { throw new CliError('Invalid profile name', 2); }
     const [command, subcommand] = positionals;
+    const timeoutSeconds = values.timeout === undefined ? 300 : Number(values.timeout);
+    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > 2147483.647 ||
+        (values.timeout !== undefined && !/^\d+(?:\.\d+)?$/.test(values.timeout))) {
+      throw new CliError('--timeout must be a positive number of seconds (at most 2147483.647)', 2);
+    }
+    if (values.timeout !== undefined && (command !== 'tools' || subcommand !== 'call')) {
+      throw new CliError('--timeout is supported only for tools call', 2);
+    }
     const toolCommand = command === 'tools' && ['ls', 'describe', 'call'].includes(subcommand);
     // Complete environment/flag credentials do not depend on a local profile.
     const hasConnection = (values.url || process.env.AMCP_URL) &&
@@ -176,7 +189,7 @@ export async function run(args = process.argv.slice(2)): Promise<number> {
       try { await listTools(profile); } catch (error) { throw classifyConnectionError(error); }
       config.profiles[name] = profile;
       await writeConfig(config);
-      print({ loggedIn: true, profile: name, url: serverUrl(profile).origin, server: profile.server }, json,
+      print({ loggedIn: true, profile: name, url: instanceUrl(profile), server: profile.server }, json,
         () => process.stdout.write(`Logged in to ${serverUrl(profile).origin} (profile: ${name}).\n`));
       return 0;
     }
@@ -192,7 +205,7 @@ export async function run(args = process.argv.slice(2)): Promise<number> {
       if (!stored) throw new CliError('Profile not found; run amcp login', 2);
       const keyHint = stored.key.startsWith('mcp_') && stored.key.length > 8
         ? `${stored.key.slice(0, 8)}…` : '[hidden]';
-      print({ profile: name, url: serverUrl(stored).toString(), server: stored.server, key: keyHint }, json,
+      print({ profile: name, url: instanceUrl(stored), endpoint: serverUrl(stored).toString(), server: stored.server, key: keyHint }, json,
         () => process.stdout.write(`Profile: ${name}\nURL: ${serverUrl(stored).toString()}\nKey: ${keyHint}\n`));
       return 0;
     }
@@ -250,7 +263,14 @@ export async function run(args = process.argv.slice(2)): Promise<number> {
             }
             if (!await confirmDestructive(tool.name)) throw new CliError('Cancelled', 2);
           }
-          return client.callTool({ name: toolName, arguments: toolArgs });
+          try {
+            return await client.callTool({ name: toolName, arguments: toolArgs }, { timeout: timeoutSeconds * 1000 });
+          } catch (error) {
+            if ((error as { code?: unknown } | null)?.code === 'REQUEST_TIMEOUT') {
+              throw new CliError(`Tool call timed out after ${timeoutSeconds}s`, 4);
+            }
+            throw error;
+          }
         });
       } catch (error) {
         if (error instanceof CliError) throw error;

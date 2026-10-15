@@ -50,16 +50,21 @@ cat args.json | amcp tools call YOUR_TOOL_NAME --args -
 ```
 
 Without `--args`, the CLI sends an empty object. Arguments must be a JSON
-object. For a tool annotated as destructive, an interactive terminal asks for
+object. Calls time out after 300 seconds by default. Set `--timeout <seconds>`
+on `tools call` for a different positive timeout (fractional seconds are allowed).
+A timeout exits with code 4 and reports `Tool call timed out after <seconds>s`.
+For a tool annotated as destructive, an interactive terminal asks for
 confirmation. In a non-interactive script, pass `--yes` explicitly. Tool text
 goes to stdout, and non-text content is available with `--json`.
 
 `--json` works with every command. It writes one JSON object to stdout: login
-and logout report the profile, `whoami` reports the URL and masked key, `tools
-ls` returns `{ "tools": [...] }`, `tools describe` returns `{ "tool": {...} }`,
+and logout report the profile, `whoami` reports the instance URL, MCP `endpoint`
+and masked key, `tools ls` returns `{ "tools": [...] }`,
+`tools describe` returns `{ "tool": {...} }`,
 and `tools call` returns `{ "tool": "name", "result": {...} }`. CLI usage and
 connection errors go to stderr (also as JSON when `--json` is set). A tool's
 `isError` result is returned on stdout in JSON mode and on stderr in text mode.
+JSON errors on stderr have the shape `{ "error": "message", "exitCode": 4 }`.
 For example:
 
 ```bash
