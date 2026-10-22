@@ -115,7 +115,7 @@ Tools register at runtime, without a restart. Per-connector `{{VAR}}` values are
 
 **Repositories:** [erp-mcp-server](<https://github.com/HelpCode-ai/erp-mcp-server>) · [weclapp-mcp-server](<https://github.com/kochfreiburg/weclapp-mcp-server>) · [sap-mcp-server](<https://github.com/HelpCode-ai/sap-mcp-server>) · [sap-hana-mcp-server](<https://github.com/HelpCode-ai/sap-hana-mcp-server>) · [sap-business-one-mcp-server](<https://github.com/HelpCode-ai/sap-business-one-mcp-server>) · [xentral-mcp-server](<https://github.com/kochfreiburg/xentral-mcp-server>)
 
-### E-commerce & marketplace connectors: 13 shops and marketplaces
+### E-commerce &amp; marketplace connectors: 13 shops and marketplaces
 
 | System | Market | Tools | What the AI can do |
 |---|---|---|---|

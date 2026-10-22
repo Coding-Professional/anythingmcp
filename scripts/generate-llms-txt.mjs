@@ -32,10 +32,40 @@ const DESCRIPTIONS = {
   'AGENTS.md': 'Repository instructions, setup commands, tests, and contribution boundaries for coding agents.',
 };
 
+// Render the HTML used by our Markdown docs without treating literal MCP
+// placeholders or URL autolinks as tags. Block contents are intentionally
+// omitted; details/summary wrappers retain the useful FAQ text.
+function renderHtml(text, inline = false) {
+  const blocks = new Set(['picture', 'p', 'div', 'table', 'iframe', 'script', 'style']);
+  const tags = new Set(['a', 'strong', 'em', 'b', 'i', 'code', 'pre', 'br', 'hr',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'span', 'source', 'img', 'details', 'summary']);
+  const stack = [];
+  let output = '';
+  let cursor = 0;
+  for (const match of text.matchAll(/<!--[\s\S]*?-->|<\/?[a-z][^<>]*>/gi)) {
+    if (!stack.length) output += text.slice(cursor, match.index);
+    cursor = match.index + match[0].length;
+    if (match[0].startsWith('<!--')) continue;
+    const tag = match[0].match(/^<(\/?)([a-z][a-z\d]*)(?=[\s/>])/i);
+    if (!tag) { if (!stack.length) output += match[0]; continue; }
+    const name = tag[2].toLowerCase();
+    if (blocks.has(name)) {
+      if (!inline && !tag[1] && !match[0].endsWith('/>')) stack.push(name);
+      else if (stack.at(-1) === name) stack.pop();
+      continue;
+    }
+    if (stack.length) continue;
+    if (!tags.has(name)) { output += match[0]; continue; }
+    if (!inline && name === 'summary') output += tag[1] ? '\n' : '### ';
+  }
+  if (!stack.length) output += text.slice(cursor);
+  return output;
+}
+
 function plain(text) {
-  return text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/<\/?(?:a|strong|em|b|i|code|span)\b[^>]*>/gi, '').replace(/[*`]/g, '')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  const entities = { '&amp;': '&', '&lt;': '<', '&gt;': '>' };
+  return renderHtml(text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1'), true)
+    .replace(/[*`]/g, '').replace(/&(?:amp|lt|gt);/g, entity => entities[entity])
     .replace(/\s+/g, ' ').trim();
 }
 
@@ -111,12 +141,7 @@ export function cleanMarkdown(markdown, source) {
       .replace(/<p\b[^>]*>\s*<strong>(AnythingMCP[\s\S]*?)<\/strong>[\s\S]*?<\/p>/i,
         (_, summary) => `${plain(summary)}\n`);
   }
-  text = text.replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<(picture|p|div|table)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
-    .replace(/<img\b[^>]*\/?\s*>/gi, '')
-    .replace(/<summary\b[^>]*>([\s\S]*?)<\/summary>/gi, (_, title) => `### ${plain(title)}\n`)
-    .replace(/<\/?details\b[^>]*>/gi, '')
-    .replace(/<\/?(?:a|strong|em|b|i|code|pre|br|hr|h[1-6]|span|source)\b[^>]*>/gi, '');
+  text = renderHtml(text);
   return rewriteLinks(text, source).replace(/\n{3,}/g, '\n\n').trim();
 }
 
@@ -129,7 +154,7 @@ function metadata(content, path) {
   const sentence = plain(paragraph).split(/(?<=[.!?])\s+(?=[A-Z])/)[0];
   const description = DESCRIPTIONS[path] || (sentence.length > 160
     ? sentence.slice(0, 157).replace(/\s+\S*$/, '') + '...' : sentence);
-  return { title: title.replace(/([\[\]])/g, '\\$1'), description };
+  return { title: title.replace(/[\\[\]]/g, char => `\\${char}`), description };
 }
 
 export function generate(root = ROOT) {

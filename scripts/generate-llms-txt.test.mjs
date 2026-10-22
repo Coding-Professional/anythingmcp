@@ -71,11 +71,12 @@ test('removes linked/reference images and HTML blocks without losing text or pla
   const input = '# Heading\n\nA useful paragraph with `LOGIN_TOKEN` and `/mcp/<serverId>`.\n\n' +
     '<picture><source srcset="banner.svg"><img src="banner.png"></picture>\n' +
     '<div>HTML-only content</div>\n<img src="logo.svg" />\n' +
+    '<!-- a comment --><iframe src="https://example.com">Embedded content</iframe>\n' +
     '[![badge](badge.svg)](https://example.com) ![alt][logo]\n' +
     '<details>\n<summary>More</summary>\n\nKeep this Markdown.\n</details>\n' +
     '<https://example.com> [Keep](../README.md)\n';
   const output = cleanMarkdown(input, 'docs/example.md');
-  assert.doesNotMatch(output, /badge|HTML-only|<picture|<img|!\[/);
+  assert.doesNotMatch(output, /badge|HTML-only|Embedded content|<!--|<iframe|<picture|<img|!\[/);
   assert.ok(output.includes('Keep this Markdown.'));
   assert.ok(output.includes('### More'));
   assert.ok(output.includes('/mcp/<serverId>'));
