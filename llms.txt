@@ -19,7 +19,7 @@
 - [REST / OpenAPI to MCP](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/connectors/rest.md): AnythingMCP turns any REST API into MCP tools for Claude, ChatGPT and Copilot without code.
 - [SAP HANA to MCP](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/connectors/sap-hana.md): AnythingMCP connects Claude, ChatGPT and Copilot to SAP HANA through MCP: any HANA database as a Database connector, and SAP S/4HANA's HANA database through...
 - [SOAP / WSDL to MCP](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/connectors/soap.md): AnythingMCP turns a SOAP web service into MCP tools for Claude, ChatGPT and Copilot without code.
-- [Tool Definition Format](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/tool-definition.md): Every MCP tool in AnythingMCP is defined by three JSON objects:
+- [Tool Definition Format](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/tool-definition.md): Define MCP tool parameters, endpoint mappings, response transforms, and adapter metadata.
 
 ## AI clients
 
@@ -33,11 +33,9 @@
 
 - [Operations](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/README.md): Documents that exist for the people running AnythingMCP in production rather than the people building it.
 - [Backup & restore](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/backup-restore.md): AnythingMCP stores all state in PostgreSQL.
-- [Card-trial offer after the first success](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/card-trial-offer.md): AnythingMCP Cloud offers the card trial at the moment a workspace sees the product work: right after its first successful tool call.
 - [Disaster recovery](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/disaster-recovery.md): Targets we hold ourselves to for AnythingMCP-the-managed-product.
-- [Observability](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/observability.md): Three pipelines.
+- [Observability](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/observability.md): Configure structured logging, Sentry error reporting, and Prometheus metrics for your deployment.
 - [Row-Level Security (defense-in-depth tenant isolation)](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/row-level-security.md): AnythingMCP isolates tenants at the application layer today: every org-scoped query carries an explicit where: { organizationId }, and the MCP endpoints are...
-- [Sign-up attribution](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/signup-attribution.md): Which channel brings AnythingMCP Cloud sign-ups, and which of them verify and pay.
 - [Service level objectives](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/slo.md): These are the SLOs we commit to for the managed AnythingMCP cloud.
 - [Single Sign-On (Microsoft Entra ID, Google, Okta, Auth0, OIDC)](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/sso.md): Let members sign in with your organization's identity provider instead of a password, and keep their AnythingMCP roles in step with your directory groups.
 - [SCIM provisioning with Microsoft Entra ID — step by step](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/scim-entra-setup.md): Click-by-click setup for automatic user and group provisioning from Entra ID into AnythingMCP.
@@ -48,6 +46,7 @@
 - [API Reference](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/api-reference.md): REST API reference for authentication, connectors, tools, MCP servers, and administration.
 - [MCP resources](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/mcp-resources.md): Besides tools, every per-server MCP endpoint (/mcp/<serverId>) serves resources: read-only text a client can attach to the model's context (resources/list,...
 - [Knowledge Graph & AI skills](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/knowledge-graph.md): The Knowledge Graph turns the connectors in a workspace into a queryable map of entities (customers, orders, products, …) and the relationships between them...
+- [Workspace memory](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/memory.md): Workspace memory lets AI clients save facts, preferences and notes and find them again later, in any client connected to an MCP server of the workspace...
 
 ## Contributing
 
@@ -62,5 +61,5 @@
 - [Connect Sorare to GitHub Copilot — NFT fantasy football inside Copilot Chat](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/guides/connect-sorare-to-copilot.md): Use Sorare tools in GitHub Copilot Chat through an AnythingMCP MCP endpoint.
 - [Connect Sorare to OpenClaw — self-hosted AI assistant + NFT fantasy football](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/guides/connect-sorare-to-openclaw.md): Connect Sorare tools to the self-hosted OpenClaw AI assistant.
 - [Sorare to MCP — Connect Sorare GraphQL API to any AI agent](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/guides/sorare-to-mcp.md): Expose the Sorare GraphQL API as MCP tools for compatible AI clients.
-- [AnythingMCP Roadmap](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/ROADMAP.md): This is a living document.
+- [AnythingMCP Roadmap](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/ROADMAP.md): Review current development priorities, planned features, and contribution opportunities.
 - [Adopters](https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/ADOPTERS.md): This page lists projects and organizations using AnythingMCP.

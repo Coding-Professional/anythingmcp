@@ -1,13 +1,43 @@
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { absoluteLink, cleanMarkdown, collectDocuments, generate, rewriteLinks } from './generate-llms-txt.mjs';
+import { absoluteLink, cleanMarkdown, collectDocuments, EXCLUDED_DOCS, generate, rewriteLinks } from './generate-llms-txt.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+function createFixture(t) {
+  const fixture = mkdtempSync(resolve(tmpdir(), 'amcp-llms-'));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  const paths = collectDocuments().flatMap(section => section.paths);
+  for (const path of new Set([...paths, ...EXCLUDED_DOCS, 'package.json', 'scripts/generate-llms-txt.mjs'])) {
+    mkdirSync(dirname(resolve(fixture, path)), { recursive: true });
+    cpSync(resolve(ROOT, path), resolve(fixture, path));
+  }
+  return fixture;
+}
+
+function assertDocsCovered(root) {
+  const scan = dir => readdirSync(resolve(root, dir), { withFileTypes: true }).flatMap(entry => {
+    const path = `${dir}/${entry.name}`;
+    return entry.isDirectory() ? scan(path) : entry.isFile() && entry.name.endsWith('.md') ? [path] : [];
+  });
+  const included = collectDocuments(root).flatMap(section => section.paths).filter(path => path.startsWith('docs/'));
+  assert.deepEqual([...included, ...EXCLUDED_DOCS].sort(), scan('docs').sort(),
+    'Every docs/**/*.md must be included in SECTIONS or explicitly listed in EXCLUDED_DOCS');
+}
+
+test('every docs/**/*.md is included or explicitly excluded, including newly nested docs', t => {
+  assertDocsCovered(ROOT);
+  const fixture = createFixture(t);
+  assertDocsCovered(fixture);
+  mkdirSync(resolve(fixture, 'docs/future/nested'), { recursive: true });
+  writeFileSync(resolve(fixture, 'docs/future/nested/new-guide.md'), '# A new guide\n');
+  assert.throws(() => assertDocsCovered(fixture), /docs\/future\/nested\/new-guide\.md/);
+});
 
 test('index covers the requested files in stable order with existing raw links', () => {
   const sections = collectDocuments();
@@ -18,6 +48,8 @@ test('index covers the requested files in stable order with existing raw links',
   assert.equal(paths.length, new Set(paths).size);
   assert.ok(paths.length > 30);
   assert.ok(paths.includes('AGENTS.md'));
+  assert.ok(sections.find(section => section.title === 'Reference').paths.includes('docs/memory.md'));
+  for (const path of EXCLUDED_DOCS) assert.ok(!paths.includes(path), path);
   assert.ok(!paths.some(p => p.startsWith('content/') || /^README\.[^.]+\.md$/.test(p)));
   const outputs = generate();
   assert.deepEqual(outputs, generate());
@@ -50,6 +82,8 @@ test('full text has no images or relative inline/reference Markdown links', () =
   assert.match(full, /# AnythingMCP: self-hosted MCP gateway/);
   assert.match(full, /AnythingMCP is an open-source, self-hosted MCP gateway/);
   assert.match(full, /### How do I create a custom connector for Claude\?/);
+  assert.match(full, /## docs\/memory\.md\n/);
+  assert.doesNotMatch(full, /## docs\/operations\/(?:card-trial-offer|signup-attribution)\.md\n|&nbsp;/);
   assert.ok(full.includes('CREATE USER AMCP_READER PASSWORD "<strong password>"'));
   assert.ok(full.includes('filter=userName eq "<a random guid>"'));
   assert.ok(full.includes('<wsse:Security><!-- redacted --></wsse:Security>'));
@@ -124,16 +158,13 @@ test('preserves fenced and inline code instead of interpreting examples as HTML 
   assert.ok(output.includes('`[example](../README.md)`'));
   assert.ok(output.includes('[the README](<https://github.com/HelpCode-ai/anythingmcp/blob/main/README.md>)'));
   assert.equal(cleanMarkdown('Before <img alt="a > b" src="logo.svg"> after', 'docs/example.md'), 'Before  after');
+  assert.equal(cleanMarkdown('A&nbsp;B and `&nbsp;`\n\n```html\n&nbsp;\n```', 'docs/example.md'),
+    'A B and `&nbsp;`\n\n```html\n&nbsp;\n```');
+  assert.equal(cleanMarkdown('A\n\n&nbsp;\n\nB', 'docs/example.md'), 'A\n\nB');
 });
 
 test('CLI resolves its own root, detects changed or missing output, and regenerates deterministically', t => {
-  const fixture = mkdtempSync(resolve(tmpdir(), 'amcp-llms-'));
-  t.after(() => rmSync(fixture, { recursive: true, force: true }));
-  const paths = collectDocuments().flatMap(section => section.paths);
-  for (const path of [...paths, 'package.json', 'scripts/generate-llms-txt.mjs']) {
-    mkdirSync(dirname(resolve(fixture, path)), { recursive: true });
-    cpSync(resolve(ROOT, path), resolve(fixture, path));
-  }
+  const fixture = createFixture(t);
   const run = (...args) => spawnSync(process.execPath, [resolve(fixture, 'scripts/generate-llms-txt.mjs'), ...args],
     { cwd: tmpdir(), encoding: 'utf8' });
   assert.equal(run('--check').status, 1);
@@ -165,4 +196,33 @@ test('CLI resolves its own root, detects changed or missing output, and regenera
   writeFileSync(index, readFileSync(index, 'utf8').replace(/\n/g, '\r\n'));
   assert.equal(run('--check').status, 1);
   assert.equal(run('--unknown').status, 1);
+});
+
+test('CLI checks and regenerates output when invoked through symlinks', t => {
+  const fixture = createFixture(t);
+  const alias = resolve(fixture, 'linked-scripts');
+  // Junctions exercise symlinked parents on Windows without symlink privileges;
+  // this also covers macOS paths such as /var -> /private/var.
+  symlinkSync(resolve(fixture, 'scripts'), alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const entries = [resolve(alias, 'generate-llms-txt.mjs')];
+  if (process.platform !== 'win32') {
+    const fileAlias = resolve(fixture, 'generate-link.mjs');
+    symlinkSync(resolve(fixture, 'scripts/generate-llms-txt.mjs'), fileAlias);
+    entries.push(fileAlias);
+  }
+  for (const entry of entries) {
+    const run = (...args) => spawnSync(process.execPath, [entry, ...args], { cwd: tmpdir(), encoding: 'utf8' });
+    rmSync(resolve(fixture, 'llms.txt'), { force: true });
+    const missing = run('--check');
+    assert.equal(missing.status, 1, missing.stderr);
+    assert.match(missing.stderr, /llms\.txt is stale/);
+    const generated = run();
+    assert.equal(generated.status, 0, generated.stderr);
+    assert.match(generated.stdout, /Generated llms-full\.txt/);
+    assert.equal(run('--check').status, 0);
+    writeFileSync(resolve(fixture, 'llms-full.txt'), 'stale output');
+    const stale = run('--check');
+    assert.equal(stale.status, 1, stale.stderr);
+    assert.match(stale.stderr, /llms-full\.txt is stale/);
+  }
 });

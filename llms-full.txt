@@ -42,8 +42,6 @@ The quickstart binds to `127.0.0.1` on purpose, because nothing in front of it t
 
 [**AnythingMCP Cloud**](<https://cloud.anythingmcp.com>) is the same AGPL code, operated by us in **Frankfurt, Germany**, with a 7-day free trial. Start there to try it on your own APIs, and move it in-house when you want the credentials to stop travelling; the connectors are the same either way. DPA/AVV on request via [info@helpcode.ai](<mailto:info@helpcode.ai>). SSO and SCIM are self-hosted only.
 
-&nbsp;
-
 ---
 
 ## How it works
@@ -4666,175 +4664,6 @@ A connector's variables (`connectors.env_vars`: API keys, passwords, tenants) ar
 
 ---
 
-## docs/operations/card-trial-offer.md
-
-Source: https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/card-trial-offer.md
-
-# Card-trial offer after the first success
-
-AnythingMCP Cloud offers the card trial at the moment a workspace sees the product work: right after its first successful tool call. Cloud only (`DEPLOYMENT_MODE=cloud`); a self-hosted instance records and shows nothing.
-
-## How it works
-
-**Trigger.** When a tool call succeeds and is stored in `tool_invocations`, `FirstSuccessService` (`packages/backend/src/audit/first-success.service.ts`) checks the workspace once per process, in the background:
-
-1. It stores the workspace's first success time in `org_settings` (`first_successful_call_at`), unless it is already there. The check stops at this indexed read for every later call, and after a restart.
-2. If that first success is less than 24 hours old and the workspace is on the **no-card trial**, it marks the workspace eligible: `org_settings.card_trial_offer_eligible_at` plus one `card_trial_offer_eligible` product event (`metadata.connectorId`, `adapterSlug`, `toolName`). The settings row is created with `ON CONFLICT DO NOTHING`, so two processes never record it twice.
-
-No-card trial means: a running `trial` licence, and no other licence in any state. Paying workspaces, card trials (a `starter`/`team` licence while Stripe says trialing), former customers and ended trials are not eligible, and keep the existing banners and licence wall. Workspaces that activated before this shipped get their first success stored, not the offer.
-
-The licence site gives no card trial to an address that ever held a subscription (it charges today), so a workspace where the site says that of every active admin is not made eligible either (`CardTrialEligibilityService`, backed by `POST /api/license/subscription-history`). No answer counts as eligible; the in-app offer and `/start-trial` check again.
-
-**In the app.** `GET /api/license/card-trial-offer` answers `{ offer: { connectorName, trialEndsAt } }` for an admin of an eligible workspace while a card trial can still start (48 hours of free trial left) and whose own address never had a subscription, and `{ offer: null }` for everyone else, members who are not admins included. While the card is on screen, the top trial banner keeps its countdown but drops its own "Add a payment method" link, so there is one call to action at a time. The dashboard, the connector list and the connect page (`/mcp-server/<id>`, which re-asks a few seconds after the live check sees the first request) show a dismissible card:
-
-> **Your AI just ran its first My Shopify store action.**
-> Keep it running: start your trial, and My Shopify store keeps working after your free trial ends on 18 October 2026.
-> [Not now] [Start your trial]
-
-The button opens `/start-trial?source=first_success_banner`. "Not now" hides the card for three days on every page (localStorage, per user). Events: `card_trial_offer_shown` (once a day per user and browser), `card_trial_offer_clicked`, `card_trial_offer_dismissed`, each with `metadata.via` = `dashboard`, `connectors` or `connect`.
-
-**Email.** The hourly Cloud onboarding cron runs `CardTrialOfferService.runEmailPass` after its trial-lifecycle and win-back passes. One email per workspace, to its active, verified admins who did not unsubscribe and whose address never had a subscription (without an answer from the licence site the email waits for the next run), between 30 minutes and 48 hours after it became eligible (30 to 90 minutes in practice). It is checked again at send time and is not sent once the workspace started a card trial, pays, or its trial ended. It waits while another email went out in the last 12 hours: a trial-lifecycle or win-back email to the workspace (`org_settings.trial_email_*`), or an onboarding or activation nudge to one of its admins (`users.onboarding_last_reminder_at`, `users.activation_reminder_at`). `org_settings.card_trial_offer_email` settles it: the send time, or `skipped:<reason>` (`customer`, `trial_ended`, `no_trial`, `no_recipient`, `no_trial_recipient`). A failed send is retried by the next run inside the window. Sent emails record `card_trial_offer_emailed` (`metadata.kind` = `trial`, or `plan` when under 48 hours were left and the email linked to the plans instead). The email's button opens `/start-trial?source=first_success_email` (or `/settings/license?source=first_success_email`, which passes the source on to its card-trial button and its pricing link), so the email and the in-app card are counted apart. Emails sent before 16 October 2026 say `source=first_success`, which is still accepted.
-
-The email talks about value only (the connection works, up to three things to ask next, taken from the connector's own tools, the trial's end date and a link back to the app), never about cards, charges or prices, and it carries the unsubscribe line. Nothing of the offer is ever part of an MCP tool response.
-
-## Attribution to Stripe
-
-Every Cloud checkout names where it started, and the licence site writes it to the Stripe Checkout Session and to the subscription as `metadata.checkout_source`. Card trials also get the same value as `metadata.trial_source` (the key the first version used; it is left off pay-now checkouts, where the name would be wrong).
-
-**In-app checkouts** (`POST /api/license/checkout-link` → the site's `POST /api/stripe/checkout-intent`). The frontend sends `source`; the backend accepts only `CHECKOUT_SOURCES` (`packages/backend/src/license/license-checkout.ts`, mirrored in `packages/frontend/src/lib/checkout-source.ts`) and sends `app` when the page named none, so no intent goes without one. It also records `checkout_link_created` with `metadata.via` = the same value and `metadata.kind` = `trial` or `pay`.
-
-| Source | Entry point |
-|---|---|
-| `first_success_banner` | the first-success card (dashboard, connectors, connect page) |
-| `first_success_email` | the first-success email |
-| `first_success` | the same offer before banner and email were told apart (old emails, open tabs) |
-| `trial_banner` | the countdown banner's "Add a payment method" / "Choose a plan" |
-| `license_page` | Settings → License |
-| `trial_ended_wall` | the wall after the free trial ("Subscribe to …") |
-| `post_approve` | "add a card now" on the page after approving an AI client |
-| `signup_prompt` | the card-trial page shown once after sign-up |
-| `trial_limit`, `starter_pack` | "add a card" next to the connector limit |
-| `chat_setup` | the plan link the setup tools give the AI (`upgradeUrl`, `choosePlanUrl`) |
-| `start_trial` | `/start-trial` opened without a known source |
-| `app` | a checkout the page did not name |
-
-**Pricing-page checkouts** (`anythingmcp.com/pricing` → `POST /api/stripe/checkout`). Links to the pricing page carry `?source=`: `app_pricing` (any app link, the default of `usePricingUrl`), `trial_banner`, `license_page`, `trial_ended_wall`, `first_success_email`, `chat_setup`, and from the Cloud's emails `email_trial_warn3`, `email_trial_warn1`, `email_trial_expired`, `email_winback`. The site keeps only the values in its `PRICING_CHECKOUT_SOURCES` and records everything else, a visitor who came on their own included, as `pricing_page`.
-
-**`/start-trial` events.** `start_trial_viewed` (once per page load) and `start_trial_checkout_started` (the button), both with `metadata.source` and `metadata.kind` (`trial`, or `pay` for an address that had a subscription). Read them against `checkout_link_created` to see where each entry point's visitors stop.
-
-**Deploy order.** Either order is safe. The site already stores any slug it gets on an intent (as `trial_source` before the site change, `checkout_source` after it) and ignores `?source=` on the pricing page until it knows it. Deploying the site first means every Cloud checkout lands in `checkout_source` from the first minute.
-
-## Weekly report
-
-**Cloud database:** eligible workspaces by the week they became eligible, and how far each got.
-
-```sql
-WITH eligible AS (
-  SELECT organization_id, min(created_at) AS eligible_at
-  FROM product_events
-  WHERE event = 'card_trial_offer_eligible'
-  GROUP BY 1
-),
-steps AS (
-  SELECT organization_id,
-         bool_or(event = 'card_trial_offer_shown')     AS shown,
-         bool_or(event = 'card_trial_offer_clicked')   AS clicked,
-         bool_or(event = 'card_trial_offer_dismissed') AS dismissed,
-         bool_or(event = 'card_trial_offer_emailed')   AS emailed,
-         bool_or(event = 'checkout_link_created' AND metadata->>'via' LIKE 'first_success%') AS checkout_opened
-  FROM product_events
-  WHERE event IN ('card_trial_offer_shown', 'card_trial_offer_clicked', 'card_trial_offer_dismissed',
-                  'card_trial_offer_emailed', 'checkout_link_created')
-  GROUP BY 1
-),
-subscribed AS (
-  -- Any Stripe licence after the offer, from any entry point (card trial or paid).
-  SELECT e.organization_id
-  FROM eligible e
-  JOIN licenses l ON l.organization_id = e.organization_id
-  WHERE l.plan <> 'trial' AND l.created_at >= e.eligible_at
-  GROUP BY 1
-)
-SELECT date_trunc('week', e.eligible_at)::date            AS week,
-       count(*)                                            AS eligible,
-       count(*) FILTER (WHERE s.shown)                     AS shown,
-       count(*) FILTER (WHERE s.clicked)                   AS clicked,
-       count(*) FILTER (WHERE s.dismissed)                 AS dismissed,
-       count(*) FILTER (WHERE s.emailed)                   AS emailed,
-       count(*) FILTER (WHERE s.checkout_opened)           AS checkout_opened,
-       count(sub.organization_id)                          AS subscribed_any_source
-FROM eligible e
-LEFT JOIN steps s USING (organization_id)
-LEFT JOIN subscribed sub USING (organization_id)
-GROUP BY 1
-ORDER BY 1 DESC;
-```
-
-**Cloud database, every entry point:** how far each source's visitors got over the last week.
-
-```sql
-SELECT coalesce(metadata->>'source', metadata->>'via')                           AS source,
-       count(*) FILTER (WHERE event = 'start_trial_viewed')                     AS start_trial_views,
-       count(*) FILTER (WHERE event = 'start_trial_checkout_started')           AS start_trial_clicks,
-       count(*) FILTER (WHERE event = 'checkout_link_created')                  AS checkout_links,
-       count(*) FILTER (WHERE event = 'checkout_link_created'
-                          AND metadata->>'kind' = 'trial')                      AS card_trial_links
-FROM product_events
-WHERE event IN ('start_trial_viewed', 'start_trial_checkout_started', 'checkout_link_created')
-  AND created_at >= now() - interval '7 days'
-GROUP BY 1
-ORDER BY checkout_links DESC;
-```
-
-**Stripe, every entry point:** Checkout Sessions of the last week by `checkout_source`, and how many completed. Sessions have no Search API, so the script lists them (100 per page). Run with the licence site's Stripe secret key in `STRIPE_KEY`; `SINCE` is a Unix time (`date -v-7d +%s` on macOS, `date -d '7 days ago' +%s` on Linux).
-
-```bash
-after=""
-while :; do
-  page=$(curl -sG https://api.stripe.com/v1/checkout/sessions -u "$STRIPE_KEY:" \
-    -d limit=100 -d "created[gte]=$SINCE" ${after:+-d starting_after=$after})
-  echo "$page" | jq -c '.data[] | select(.metadata.app == "anythingmcp")'
-  [ "$(echo "$page" | jq -r .has_more)" = true ] || break
-  after=$(echo "$page" | jq -r '.data[-1].id')
-done |
-jq -rs 'group_by(.metadata.checkout_source // .metadata.trial_source // "(none)")[]
-  | [ (.[0].metadata.checkout_source // .metadata.trial_source // "(none)"),
-      length,
-      (map(select(.status == "complete")) | length),
-      (map(select(.metadata.trial == "1")) | length),
-      (map(select(.metadata.trial == "1" and .status == "complete")) | length) ]
-  | @tsv' |
-(echo -e "source\tsessions\tcompleted\ttrial_sessions\ttrials_completed"; cat)
-```
-
-`(none)` is a session from before the change. Subscriptions are searchable directly: `metadata['checkout_source']:'first_success_email'`.
-
-**Stripe, the offer:** card trials started from the offer, and how many of them paid after the trial, by the week the subscription was created. Run with the licence site's Stripe secret key in `STRIPE_KEY` (the Search API returns at most 100 rows per page; follow `next_page` when `has_more` is true).
-
-```bash
-curl -sG https://api.stripe.com/v1/subscriptions/search -u "$STRIPE_KEY:" \
-  --data-urlencode "query=metadata['checkout_source']:'first_success_banner' OR metadata['checkout_source']:'first_success_email' OR metadata['trial_source']:'first_success'" \
-  -d limit=100 -d 'expand[]=data.latest_invoice' |
-jq -r --argjson now "$(date +%s)" '
-  [.data[] | {
-     week: (.created | strftime("%G-W%V")),
-     card_trial: (.trial_end != null),
-     trial_over: ((.trial_end // 0) < $now),
-     paid: ((.latest_invoice.amount_paid // 0) > 0)
-   }]
-  | group_by(.week)[]
-  | [ .[0].week,
-      (map(select(.card_trial)) | length),
-      (map(select(.card_trial and .trial_over)) | length),
-      (map(select(.card_trial and .trial_over and .paid)) | length) ]
-  | @tsv' |
-(echo -e "week\tcard_trials_started\ttrials_ended\tpaid_after_trial"; cat)
-```
-
-`paid_after_trial` counts subscriptions whose latest invoice, the first one after the trial, was paid with a non-zero amount. `metadata.organizationId` on each subscription joins it back to the workspace and its `card_trial_offer_eligible` week.
-
----
-
 ## docs/operations/disaster-recovery.md
 
 Source: https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/disaster-recovery.md
@@ -5241,169 +5070,6 @@ Rollback at any time with `prisma/rls/disable-rls.sql`.
 - `PrismaService.tenantTx()` — the per-request tenant-context transaction
 - `src/common/rls.integration.spec.ts` — real-Postgres isolation proof (gated by
   `RLS_TEST_DATABASE_URL`)
-
----
-
-## docs/operations/signup-attribution.md
-
-Source: https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/operations/signup-attribution.md
-
-# Sign-up attribution
-
-Which channel brings AnythingMCP Cloud sign-ups, and which of them verify and pay. Cloud only: a self-hosted instance records nothing.
-
-## How it is recorded
-
-1. **anythingmcp.com** notes, per visitor, the first and the last *touch*: UTM tags, Google Ads' `gad_source` / `gad_campaignid`, `paid` (a gclid, gbraid or wbraid was on the URL), the referrer's host and the landing path. A click id itself (Google's, or `oppref`, the click reference OpenAI appends to a ChatGPT Ads landing URL) travels only with `ad_consent: "granted"` (the visitor allowed marketing cookies). Kept in memory for the visit, and in localStorage for 30 days only once the visitor has allowed analytics in the cookie banner.
-2. When the visitor clicks through to `cloud.anythingmcp.com`, the link gets `amcp_src=<base64url JSON first touch>` and, if different, `amcp_lt=<last touch>`.
-3. **The cloud sign-up page** reads those, or, for a visitor who came straight to the cloud app, builds its own touch from its URL and the referrer's host (`captured_on: "cloud"`). For its own touch, a click id is kept only if the cloud's cookie banner has the *marketing* category accepted; if that banner says no, click ids handed over by the site are dropped too. It sends them with `POST /api/auth/register` as `attribution: { first_touch, last_touch }`.
-4. **The backend** sanitizes them again and, for a **newly created account only**, writes a `signup_attributed` row to `product_events` (`user_id`, `organization_id` = the workspace created at sign-up). A click id (`gclid`, `gbraid`, `wbraid`: `[A-Za-z0-9_-]`, at most 150 characters; `oppref`: opaque printable ASCII without spaces, quotes or `@`, at most 500 characters) is stored only on a touch with `ad_consent: "granted"` and dropped otherwise. An address that already has an account records nothing, and the answer to the sign-up is the same either way.
-
-## Purchases as Google Ads offline conversions
-
-`GET /api/auth/attribution/click-ids` (signed in, cloud only; `{}` on self-hosted) returns the caller's own click ids from their `signup_attributed` row, e.g. `{ "gclid": "…", "oppref": "…", "ad_consent": "granted", "captured_at": "…" }`: at most one Google id (last touch before first; gclid before gbraid before wbraid) and the most recent `oppref`, and only if stored with consent. The cloud app appends them to its links to the pricing page (`?return_url=…&gclid=…&oppref=…`); the pricing page puts them into the Stripe checkout metadata and the site's Stripe webhook reports the purchase to Google Ads and, for an `oppref`, to ChatGPT Ads.
-
-## Activations as ad conversions
-
-A sign-up is cheap; a workspace that runs a tool is what the campaigns should buy. When a Cloud workspace's tool call succeeds and is stored in `tool_invocations`, the backend (`packages/backend/src/audit/ads-activation.service.ts`, in the background, never delaying the call) checks once per workspace:
-
-1. no `ads_activation_reported` event exists yet for the workspace;
-2. its `signup_attributed` row carries a click id stored with `ad_consent: "granted"` (the same selection as above: last touch before first, gclid before gbraid before wbraid; and/or an `oppref`).
-
-If both hold, it sends `POST https://anythingmcp.com/api/ads/activation` with the service token (`x-amcp-service-token`):
-
-```json
-{
-  "organizationId": "…",
-  "activatedAt": "<time of the workspace's earliest SUCCESS invocation>",
-  "gclid": "…",
-  "adConsent": "granted",
-  "email": "<the address that signed up>"
-}
-```
-
-At most one Google click id (`gclid`, `gbraid` or `wbraid`) plus `oppref` when the sign-up came from ChatGPT Ads; the site reports to Google Ads for the former and to ChatGPT Ads for the latter. `email` only with consent granted, and left out if that account was deleted. The site queues the reports and is idempotent per `organizationId`. A 2xx, or a 4xx other than 401/429 (a refusal for good), records `ads_activation_reported` (`metadata.kind` = which click id, `gclid+oppref` for both, `metadata.status` = the site's answer), so a restart never reports twice. 401, 429, 5xx and network errors are retried three times with backoff; if all fail nothing is recorded, and the next successful call after a ten-minute pause (or after a restart) tries again. Workspaces without a consented click id are only remembered in memory, so the check runs at most once per workspace and process. Neither the email nor the click id is ever logged.
-
-Inert on self-hosted (`DEPLOYMENT_MODE` other than `cloud`) and when `LICENSE_SERVICE_TOKEN` is unset (one warning at the first success).
-
-Activations reported, by click-id type:
-
-```sql
-SELECT metadata->>'kind' AS kind, metadata->>'status' AS status, count(*)
-FROM product_events
-WHERE event = 'ads_activation_reported'
-GROUP BY 1, 2
-ORDER BY 3 DESC;
-```
-
-## Verified sign-ups for ChatGPT Ads
-
-Google Ads counts a verified sign-up from the browser (the `sign_up_verified` GTM event). ChatGPT Ads gets it server-side instead: when a user verifies their address (code or link), `packages/backend/src/audit/ads-signup.service.ts` checks, in the background, that no `ads_signup_reported` event exists for the user and that their `signup_attributed` row carries an `oppref` stored with `ad_consent: "granted"`. If so it sends `POST https://anythingmcp.com/api/ads/signup` with the service token:
-
-```json
-{
-  "userId": "…",
-  "organizationId": "…",
-  "verifiedAt": "<now>",
-  "oppref": "…",
-  "adConsent": "granted",
-  "email": "<the address that signed up>"
-}
-```
-
-The site sends it to OpenAI's Conversions API as `registration_completed` and is idempotent per `userId`. A 2xx, or a refusal for good, records `ads_signup_reported` (`metadata.kind = 'oppref'`, `metadata.status`). Retries as for activations; a report that fails every attempt is not tried again. Same inert conditions as above.
-
-## Stored metadata
-
-Stored metadata (the channel is derived on the server, see `packages/backend/src/audit/signup-attribution.ts`):
-
-```json
-{
-  "first_channel": "google_ads",
-  "last_channel": "ai_assistant",
-  "first_touch": {
-    "utm_source": "google", "utm_medium": "cpc", "utm_campaign": "pmax-de",
-    "gad_source": "1", "gad_campaignid": "22334455", "paid": true,
-    "referrer_host": "google.com", "landing_path": "/de/guides/sap-business-one",
-    "ts": "2026-09-24T08:30:00.000Z", "captured_on": "site", "channel": "google_ads"
-  },
-  "last_touch": {
-    "utm_source": "chatgpt.com", "referrer_host": "chatgpt.com", "landing_path": "/login",
-    "ts": "2026-09-24T09:30:00.000Z", "captured_on": "cloud", "channel": "ai_assistant"
-  }
-}
-```
-
-Channels: `google_ads`, `chatgpt_ads` (`utm_source=chatgpt_ads`, the tag on our ChatGPT Ads URLs, or an `oppref`; organic ChatGPT links say `utm_source=chatgpt.com` and stay `ai_assistant`), `paid_other`, `ai_assistant`, `github`, `organic_google`, `organic_search`, `social`, `email`, `website` (came from anythingmcp.com but without its touch, e.g. scripts blocked), `referral`, `direct`.
-
-## Reports
-
-Run against the cloud database (see the droplet notes for access). Sign-ups before the feature shipped, and accounts created by invitation or SSO, have no `signup_attributed` row; the first query counts them as `unattributed`.
-
-**Sign-ups, verified sign-ups and paying workspaces by channel, last 30 days:**
-
-```sql
-WITH signups AS (
-  SELECT u.id AS user_id,
-         u.email_verified,
-         COALESCE(pe.metadata->>'first_channel', 'unattributed') AS first_channel,
-         COALESCE(pe.metadata->>'last_channel',  'unattributed') AS last_channel
-  FROM users u
-  LEFT JOIN product_events pe
-         ON pe.user_id = u.id AND pe.event = 'signup_attributed'
-  WHERE u.created_at >= now() - interval '30 days'
-),
-paying AS (
-  -- A member of any workspace with a paid plan. Status is not filtered, so a
-  -- customer who paid and later cancelled still counts as a conversion.
-  SELECT DISTINCT om.user_id
-  FROM organization_members om
-  JOIN licenses l ON l.organization_id = om.organization_id
-  WHERE l.plan NOT IN ('trial', 'community')
-)
-SELECT s.first_channel,
-       count(*)                                  AS signups,
-       count(*) FILTER (WHERE s.email_verified)  AS verified,
-       count(p.user_id)                          AS paying,
-       round(100.0 * count(*) FILTER (WHERE s.email_verified) / count(*), 1) AS verified_pct
-FROM signups s
-LEFT JOIN paying p ON p.user_id = s.user_id
-GROUP BY s.first_channel
-ORDER BY signups DESC;
-```
-
-Swap `first_channel` for `last_channel` for last-touch attribution.
-
-**Google Ads by campaign** (is Performance Max buying sign-ups that never verify?):
-
-```sql
-SELECT COALESCE(pe.metadata->'first_touch'->>'gad_campaignid',
-                pe.metadata->'first_touch'->>'utm_campaign', '?') AS campaign,
-       count(*)                                 AS signups,
-       count(*) FILTER (WHERE u.email_verified) AS verified
-FROM product_events pe
-JOIN users u ON u.id = pe.user_id
-WHERE pe.event = 'signup_attributed'
-  AND pe.metadata->>'first_channel' = 'google_ads'
-  AND pe.created_at >= now() - interval '30 days'
-GROUP BY 1
-ORDER BY signups DESC;
-```
-
-**Referrers behind a channel** (which AI assistant, which site):
-
-```sql
-SELECT pe.metadata->'first_touch'->>'referrer_host' AS referrer, count(*)
-FROM product_events pe
-WHERE pe.event = 'signup_attributed'
-  AND pe.metadata->>'first_channel' IN ('ai_assistant', 'referral')
-GROUP BY 1
-ORDER BY 2 DESC;
-```
-
-## Verified sign-ups in Google Ads
-
-The cloud frontend pushes `{ event: 'sign_up_verified', method: 'code' | 'link' }` to `window.dataLayer` once, when an email verification succeeds (the code on the sign-in page, or the link to `/verify-email`). It carries no email, name or id, and it only happens where GTM is loaded (`GTM_ID` set, i.e. AnythingMCP Cloud). In GTM, a *Custom Event* trigger on `sign_up_verified` drives the Google Ads conversion tag; that conversion, not the register-form submit, should be the primary one.
 
 ---
 
@@ -7044,6 +6710,131 @@ optional enrichment and skill-generation passes on top.
 
 ---
 
+## docs/memory.md
+
+Source: https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/docs/memory.md
+
+# Workspace memory
+
+Workspace memory lets AI clients save facts, preferences and notes and find
+them again later, in any client connected to an MCP server of the workspace
+(Claude, ChatGPT, Copilot, Cursor and others). It is available with an
+**Enterprise licence**, on AnythingMCP Cloud and on self-hosted instances.
+
+- **My memory** (personal): one user's items, for example "answer me in
+  Italian, numbers as tables". Only that user can read them, admins included.
+- **Company memory** (organization): knowledge for everyone, for example
+  "STAMMKUNDE means a customer with a framework agreement".
+
+Memory is served to AI clients as information written by people, never as
+instructions. Rules and procedures the AI must follow belong in
+[AI skills](<https://github.com/HelpCode-ai/anythingmcp/blob/main/docs/knowledge-graph.md#ai-skills>).
+
+## MCP tools
+
+The tools are offered on per-server endpoints (`/mcp/<serverId>`) only, and
+only those the user's access level allows. The shared `/mcp` endpoint is
+unchanged.
+
+claude.ai caches a connector's tool list: after memory is turned on for a user,
+refresh it under *Customize → Connectors →* the connector *→ ⋮ → Refresh tools
+list* before the memory tools appear in new chats.
+
+| Tool | Offered from | What it does |
+|---|---|---|
+| `memory_search(query?, scope?, limit?, about?, folder?)` | Read | Full-text search over the company memory and, from Personal up, the user's own items. An empty query returns the most recent items. |
+| `memory_save(content, kind?, scope?, tags?, about?, folder?)` | Personal | Saves a fact, preference or note. `scope: "organization"` is offered from Contribute. |
+| `memory_forget(id)` | Personal | Deletes one of the user's own personal items. Company memory is changed in the dashboard only. |
+
+### Memory and the knowledge graph
+
+An item can say what it is about, as the [knowledge graph](<https://github.com/HelpCode-ai/anythingmcp/blob/main/docs/knowledge-graph.md>)
+names it (`about: "customer"`, normalised like graph entities, so "Customers"
+becomes `customer`). `memory_save` and `memory_search` accept `about`, and the
+Memory page has an *About* field. When an AI client asks `kg_how_to_obtain`
+about an entity, the answer also lists the facts about it that the user may
+read (their memory access and folders apply), marked as information written by
+people.
+
+## Access per user
+
+Each user has one of these levels in a workspace (Settings → Users → *Memory*,
+one by one or for several selected users):
+
+| Level | Company memory | My memory | Propose to company memory |
+|---|---|---|---|
+| No access | – | – | – |
+| Read | read | – | – |
+| Personal | read | read and write | – |
+| Contribute | read | read and write | yes |
+| Default | the workspace default (Memory page → *Workspace settings*, initially Personal) | | |
+
+Users without a user identity (instance-level static credentials,
+client-credentials tokens) and deactivated users have no access.
+
+## Company memory from AI clients
+
+Memory page → *Workspace settings* → *Company memory from AI clients*:
+
+- **Needs approval** (default): what an AI client proposes waits under
+  *To review* until an admin or editor approves or rejects it.
+- **Saved automatically**: it is active right away.
+
+Either way, each item records who saved it and from which client, and admins
+and editors can edit or delete company memory on the Memory page. They can
+also add to it directly.
+
+## Folders
+
+Company memory and skills share one folder tree per workspace, so a topic
+such as "Sales / Quotes" holds both the procedures (skills) and the facts
+(memory). Folders are available in every edition.
+
+- Admins and editors create, rename, describe, move and delete folders from
+  the left column of the Memory page (Company memory tab) or the AI Skills
+  page. Folders go up to 4 levels deep. Deleting a folder moves its subfolders
+  and items to its parent; nothing is deleted.
+- Personal memory has no folders; use tags.
+- `memory_search(folder: "Sales")` searches a folder and its subfolders.
+  `memory_save` can file a company item in an existing folder. AI clients
+  never create folders. Results show each item's folder.
+
+### Limiting folders to roles (Enterprise)
+
+An admin can limit a folder to one or more custom roles (Settings → Roles,
+including roles synced from the identity provider): edit the folder → *Visible
+to*. The limit applies to the folder and everything below it, for skills and
+memory alike, on every path: instructions, `skills_list` / `skill_get`,
+prompts, `memory_search`, `kg_how_to_obtain` and the dashboard. Workspace
+admins see every folder. For everyone else a limited folder does not exist.
+
+Setting limits needs an Enterprise licence. Limits already set keep applying
+without it, so access never widens on its own. Every change is logged as
+`KNOWLEDGE_FOLDER_ACCESS_CHANGED`.
+
+## Privacy and safety
+
+- Content that looks like a password, token or key is refused.
+- An item holds up to 2,000 characters and 10 tags. A user keeps up to 1,000
+  personal items per workspace, a workspace up to 20,000 items.
+- Admins can erase a user's personal memory without reading it (Settings →
+  Users → select → *Erase personal memory*). Removing a user from a workspace
+  deletes their personal memory there; deleting the account deletes all of it.
+- Every change of access or settings and every erasure is recorded in the
+  security event log (`MEMORY_ACCESS_CHANGED`, `MEMORY_SETTINGS_CHANGED`,
+  `MEMORY_ERASED`).
+- Without the licence (or after it expires) the tools and the page are not
+  available; stored memory is kept, and admins can still erase personal memory.
+
+## Search
+
+Search uses PostgreSQL full text with the `simple` configuration (no stemming,
+so German, Italian and English behave alike), ranked by relevance, and falls
+back to a substring match for partial words and codes. No extra service or
+embedding provider is needed.
+
+---
+
 ## .github/CONTRIBUTING.md
 
 Source: https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/.github/CONTRIBUTING.md
@@ -7095,7 +6886,6 @@ We use AI assistants (Claude Code, GitHub Copilot, etc.) in our own development 
 
 We will not refuse a PR because it was AI-assisted, and we will not single it out either. See [AUTHORS.md](<https://github.com/HelpCode-ai/anythingmcp/blob/main/docs/AUTHORS.md>) for how we use AI ourselves.
 Read [AGENTS.md](<https://github.com/HelpCode-ai/anythingmcp/blob/main/AGENTS.md>) for AI coding agent commands and repository rules.
-After changing docs, run `node scripts/generate-llms-txt.mjs` and commit the generated files.
 
 ## Getting Started
 
@@ -7202,6 +6992,8 @@ An adapter is one JSON file; the rest is generated and checked.
 4. Add `<region>/<slug>.live.spec.ts` (copy `intl/todoist.live.spec.ts`):
    static assertions always, live calls behind `RUN_<SLUG>_LIVE=1`.
 5. `node scripts/adapter-count.mjs --check` — bump the quoted counts it names.
+   Then run `node scripts/generate-llms-txt.mjs` and commit the regenerated
+   `llms.txt` and `llms-full.txt` alongside the count updates.
 6. Drop the brand logo at
    `packages/frontend/public/logos/connectors/<icon>.svg`.
 
@@ -7217,7 +7009,9 @@ Open an issue before starting work on:
 
 ## Pull Request Process
 
-1. **Update documentation** if your change affects user-facing behavior
+1. **Update documentation** if your change affects user-facing behavior.
+   After changing docs, run `node scripts/generate-llms-txt.mjs` from the root
+   and commit the generated files.
 2. **Add tests** for new functionality
 3. **Ensure all tests pass** (`npm test`)
 4. **Keep PRs focused** — one feature or fix per PR
@@ -7290,7 +7084,6 @@ Source: https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/AGENTS.md
 # Agent instructions
 
 Read [.github/CONTRIBUTING.md](<https://github.com/HelpCode-ai/anythingmcp/blob/main/.github/CONTRIBUTING.md>) before making changes.
-After changing docs, run `node scripts/generate-llms-txt.mjs` and commit the generated files.
 Never add or change code under any `ee/` directory: it uses the AnythingMCP
 Commercial License; use AGPL-3.0-only for the rest of the repository.
 Read [LICENSING.md](<https://github.com/HelpCode-ai/anythingmcp/blob/main/LICENSING.md>), [the EE README](<https://github.com/HelpCode-ai/anythingmcp/blob/main/packages/backend/src/ee/README.md>),
@@ -7364,6 +7157,10 @@ Record baseline failures separately from regressions; never claim a failed run p
 Avoid root `npm test`: it runs tests in all workspaces and fails because the
 frontend has no `test` script. Use the backend command above for catalog tests.
 
+After changing docs, run `node scripts/generate-llms-txt.mjs` from the root and
+commit the generated files. Verify freshness with
+`node scripts/generate-llms-txt.mjs --check`.
+
 Run frontend checks in `packages/frontend`:
 
 ```bash
@@ -7416,7 +7213,9 @@ Read [docs/tool-definition.md](<https://github.com/HelpCode-ai/anythingmcp/blob/
 5. Check the quoted counts and update the files the checker names:
    ```bash
    node scripts/adapter-count.mjs --check
+   node scripts/generate-llms-txt.mjs
    ```
+   Commit the updated counts and regenerated `llms.txt` and `llms-full.txt`.
 6. Add the logo at `packages/frontend/public/logos/connectors/<icon>.svg`.
 
 ## Hard rules and deployment modes

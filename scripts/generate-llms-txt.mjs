@@ -1,18 +1,24 @@
 #!/usr/bin/env node
 // Repository documentation for AI clients. No runtime or website output.
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RAW = 'https://raw.githubusercontent.com/HelpCode-ai/anythingmcp/main/';
 const GITHUB = 'https://github.com/HelpCode-ai/anythingmcp/blob/main/';
+// Contributor credits and Cloud operator internals are not product guides.
+export const EXCLUDED_DOCS = [
+  'docs/AUTHORS.md',
+  'docs/operations/card-trial-offer.md',
+  'docs/operations/signup-attribution.md',
+];
 const SECTIONS = [
   ['Getting started', ['README.md', 'docs/deployment.md', 'docs/guides.md']],
   ['Connectors', ['docs/connectors/*.md', 'docs/tool-definition.md']],
   ['AI clients', ['docs/integrations/*.md']],
   ['Operations and security', ['docs/operations/*.md', 'docs/sso.md', 'docs/scim-entra-setup.md', 'docs/license-faq.md']],
-  ['Reference', ['docs/api-reference.md', 'docs/mcp-resources.md', 'docs/knowledge-graph.md']],
+  ['Reference', ['docs/api-reference.md', 'docs/mcp-resources.md', 'docs/knowledge-graph.md', 'docs/memory.md']],
   ['Contributing', ['.github/CONTRIBUTING.md', 'AGENTS.md']],
   ['Optional', ['docs/guides/*.md', 'docs/ROADMAP.md', 'docs/ADOPTERS.md']],
 ];
@@ -21,6 +27,9 @@ const DESCRIPTIONS = {
   'docs/deployment.md': 'Deploy AnythingMCP with Docker and configure authentication, networking, and production settings.',
   'docs/connectors/login-token-auth.md': 'Build connectors that exchange credentials for cached bearer tokens with automatic refresh and re-login.',
   'docs/api-reference.md': 'REST API reference for authentication, connectors, tools, MCP servers, and administration.',
+  'docs/tool-definition.md': 'Define MCP tool parameters, endpoint mappings, response transforms, and adapter metadata.',
+  'docs/operations/observability.md': 'Configure structured logging, Sentry error reporting, and Prometheus metrics for your deployment.',
+  'docs/ROADMAP.md': 'Review current development priorities, planned features, and contribution opportunities.',
   'docs/guides/connect-sorare-to-chatgpt.md': 'Connect Sorare fantasy football tools to ChatGPT through AnythingMCP.',
   'docs/guides/connect-sorare-to-claude.md': 'Connect Sorare fantasy football tools to Claude Desktop and Claude Code.',
   'docs/guides/connect-sorare-to-cloud.md': 'Use AnythingMCP Cloud to connect the Sorare GraphQL API without a local server.',
@@ -122,9 +131,9 @@ function renderHtml(text, inline = false) {
 }
 
 function plain(text) {
-  const entities = { '&amp;': '&', '&lt;': '<', '&gt;': '>' };
+  const entities = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&nbsp;': ' ' };
   return renderHtml(text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1'), true)
-    .replace(/[*`]/g, '').replace(/&(?:amp|lt|gt);/g, entity => entities[entity])
+    .replace(/[*`]/g, '').replace(/&(?:amp|lt|gt|nbsp);/g, entity => entities[entity])
     .replace(/\s+/g, ' ').trim();
 }
 
@@ -137,7 +146,7 @@ export function collectDocuments(root = ROOT) {
       return readdirSync(resolve(root, dir), { withFileTypes: true })
         .filter(entry => entry.isFile() && entry.name.endsWith('.md'))
         .map(entry => `${dir}/${entry.name}`).sort();
-    }),
+    }).filter(path => !EXCLUDED_DOCS.includes(path)),
   }));
 }
 
@@ -214,8 +223,8 @@ export function cleanMarkdown(markdown, source) {
       .replace(/<p\b[^>]*>\s*<strong>(AnythingMCP[\s\S]*?)<\/strong>[\s\S]*?<\/p>/i,
         (_, summary) => `${plain(summary)}\n`);
   }
-  text = renderHtml(text);
-  return code.restore(rewriteProseLinks(text, source).replace(/\n{3,}/g, '\n\n').trim());
+  text = renderHtml(text).replace(/&nbsp;/g, ' ');
+  return code.restore(rewriteProseLinks(text, source).replace(/^[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim());
 }
 
 function metadata(content, path) {
@@ -247,7 +256,7 @@ export function generate(root = ROOT) {
   return { 'llms.txt': index, 'llms-full.txt': full };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     if (process.argv.slice(2).some(arg => arg !== '--check')) throw new Error('Usage: node scripts/generate-llms-txt.mjs [--check]');
     const check = process.argv.includes('--check');
