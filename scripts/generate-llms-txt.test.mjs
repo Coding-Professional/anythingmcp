@@ -49,6 +49,7 @@ test('full text has no images or relative inline/reference Markdown links', () =
   }
   assert.match(full, /# AnythingMCP: self-hosted MCP gateway/);
   assert.match(full, /AnythingMCP is an open-source, self-hosted MCP gateway/);
+  assert.match(full, /### How do I create a custom connector for Claude\?/);
   assert.doesNotMatch(full, /star-history\.com|badges\/banner\.png/);
 });
 
@@ -76,6 +77,7 @@ test('removes linked/reference images and HTML blocks without losing text or pla
   const output = cleanMarkdown(input, 'docs/example.md');
   assert.doesNotMatch(output, /badge|HTML-only|<picture|<img|!\[/);
   assert.ok(output.includes('Keep this Markdown.'));
+  assert.ok(output.includes('### More'));
   assert.ok(output.includes('/mcp/<serverId>'));
   assert.ok(output.includes('<https://example.com>'));
 });

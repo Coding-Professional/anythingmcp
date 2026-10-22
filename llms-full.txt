@@ -38,6 +38,8 @@ On amd64 the image pulls in about 30 s and the API is healthy 24 s later. The im
 
 The quickstart binds to `127.0.0.1` on purpose, because nothing in front of it terminates TLS. **For an instance other people or a cloud AI client can reach**, clone the repo and run `./setup.sh`: it asks for a domain, gets certificates through Caddy, generates the secrets and sets the MCP auth mode. See the [Deployment Guide](<https://github.com/HelpCode-ai/anythingmcp/blob/main/docs/deployment.md>).
 
+### Other ways to run it: managed cloud, Railway, DigitalOcean
+
 [**AnythingMCP Cloud**](<https://cloud.anythingmcp.com>) is the same AGPL code, operated by us in **Frankfurt, Germany**, with a 7-day free trial. Start there to try it on your own APIs, and move it in-house when you want the credentials to stop travelling; the connectors are the same either way. DPA/AVV on request via [info@helpcode.ai](<mailto:info@helpcode.ai>). SSO and SCIM are self-hosted only.
 
 &nbsp;
@@ -86,6 +88,8 @@ Tools register at runtime, without a restart. Per-connector `{{VAR}}` values are
 | 📈 Advertising &amp; analytics | Google Ads, Google Analytics 4, Google Search Console, Matomo |
 | 🧠 AI decision models | Jev by TypeSafe: yes/no, classification and scoring with probabilities, in about 300 ms |
 
+### ERP connectors: 18 systems, with tools and markets
+
 | System | Market | Tools | What the AI can do |
 |---|---|---|---|
 | [SAP Business One](<https://anythingmcp.com/guides/connect-sap-business-one-to-claude>) | Global | 24 | Business partners, items, sales documents, A/P invoices, payments, journal entries, chart of accounts, bank reconciliations; create sales orders |
@@ -110,6 +114,8 @@ Tools register at runtime, without a restart. Per-connector `{{VAR}}` values are
 † Built from the vendor's published API documentation and not yet exercised against a live tenant. If you run one of these, a report or a fix is very welcome.
 
 **Repositories:** [erp-mcp-server](<https://github.com/HelpCode-ai/erp-mcp-server>) · [weclapp-mcp-server](<https://github.com/kochfreiburg/weclapp-mcp-server>) · [sap-mcp-server](<https://github.com/HelpCode-ai/sap-mcp-server>) · [sap-hana-mcp-server](<https://github.com/HelpCode-ai/sap-hana-mcp-server>) · [sap-business-one-mcp-server](<https://github.com/HelpCode-ai/sap-business-one-mcp-server>) · [xentral-mcp-server](<https://github.com/kochfreiburg/xentral-mcp-server>)
+
+### E-commerce & marketplace connectors: 13 shops and marketplaces
 
 | System | Market | Tools | What the AI can do |
 |---|---|---|---|
@@ -752,27 +758,51 @@ On an MCP server's page, the **Share this server** card gives you "Add to Cursor
 
 ## FAQ
 
+### How do I create a custom connector for Claude?
+
 Run AnythingMCP (self-hosted or [Cloud](<https://cloud.anythingmcp.com>)), import your API spec or pick a pre-built adapter, then add the gateway URL in Claude under *Customize → Connectors*. On AnythingMCP Cloud you can instead add AnythingMCP from the [Claude Directory](<https://claude.ai/directory/anythingmcp>) in one click. No code required — the [Claude guide](<https://github.com/HelpCode-ai/anythingmcp/blob/main/docs/integrations/claude.md>) walks through it in ~5 minutes.
+
+### Can I build a ChatGPT app from my existing API?
 
 Yes. As of December 2025, OpenAI calls these **apps in ChatGPT** (the term now covers both interactive apps and data connectors), and they're built on MCP via the Apps SDK. AnythingMCP generates the MCP backend from your existing API: add it in ChatGPT under Plugins (+, **Add custom MCP server**), or use it as the tool layer of an Apps SDK app. See [Turn your API into a ChatGPT app](<https://github.com/HelpCode-ai/anythingmcp/blob/main/README.md#use-it-from-claude-chatgpt-copilot-and-gemini>).
 
+### Do I need to know how to code?
+
 No. Importing an OpenAPI/Postman/WSDL spec, editing tools in the visual editor, and connecting Claude or ChatGPT are all point-and-click. Code only comes into play if you want to contribute a new adapter (a single JSON file) or self-host with custom infrastructure.
+
+### What is an MCP server?
 
 An MCP server exposes tools to an AI agent over the [Model Context Protocol](<https://modelcontextprotocol.io/>) — an open standard from Anthropic. Once connected, the AI can call those tools to read data, run queries, or perform actions on your behalf. AnythingMCP is a self-hosted MCP server that wraps your existing APIs so you don't have to write one from scratch.
 
+### How is AnythingMCP different from writing my own MCP server?
+
 You don't write code. AnythingMCP imports your OpenAPI / Postman / WSDL spec (or you point it at a database) and generates the MCP tools automatically. You also get auth, audit logging, RBAC, and a visual editor on top — features that would take weeks to build per service.
+
+### Is AnythingMCP really open source?
 
 Yes. AnythingMCP is licensed under the [GNU AGPL v3](<https://github.com/HelpCode-ai/anythingmcp/blob/main/LICENSE>), an OSI-approved open-source license — the same model as Twenty, Cal.com, Grafana and Plausible. You can read, fork, modify, self-host and even offer it as a service; the AGPL's network copyleft simply requires that modifications to the software stay open. The only exception is code under `ee/` directories (cloud-operator features), which is commercially licensed and not needed for self-hosting. See the [License FAQ](<https://github.com/HelpCode-ai/anythingmcp/blob/main/docs/license-faq.md>).
 
+### Is AnythingMCP free?
+
 Yes. AnythingMCP is free software under the AGPL v3 — free for internal company use, personal use, development, testing, evaluation and academic use. If you modify it and run it as a network service for others, the AGPL requires you to make your modified source available to those users. For commercial licensing without copyleft obligations: [info@helpcode.ai](<mailto:info@helpcode.ai>).
+
+### Can I self-host?
 
 Yes — it ships as a Docker image and runs on your own infrastructure. Run `./setup.sh` or use the [Railway](<https://railway.com/deploy/8-X4WD?referralCode=k30bPV>) and [DigitalOcean](<https://marketplace.digitalocean.com/apps/anythingmcp>) one-click installs. There's also a managed [Cloud version](<https://cloud.anythingmcp.com>) if you'd rather not run it yourself.
 
+### What about SOAP and WSDL?
+
 Built-in. AnythingMCP automatically parses WSDL documents and generates one MCP tool per SOAP operation. Useful for legacy enterprise APIs (SAP, Oracle, .NET WCF, banking middleware) that no AI client speaks natively.
+
+### Is MCP dead now that agents use CLI tools?
 
 No — but the question conflates two problems. CLI is the right call when the model already knows the tool from training (`git`, `docker`, `kubectl`), the agent is acting for the builder, and a CLI actually exists. MCP wins when you need per-user auth, scoped permissions, audit logs, multi-tenant isolation, or SaaS integrations without a CLI. The mature pattern in 2026 is **hybrid**: CLI for local/dev tools, MCP for SaaS / multi-tenant / compliance-bound integrations. Full decision matrix on [anythingmcp.com/vs/cli](<https://anythingmcp.com/vs/cli>).
 
+### Can the AI access my production database directly?
+
 Yes, with safety. PostgreSQL, MySQL, MariaDB, MSSQL, Oracle, MongoDB and SQLite are supported. Each tool is whitelisted, every invocation is audit-logged, and you can scope a connector to read-only credentials. See the [Database Connector Guide](<https://github.com/HelpCode-ai/anythingmcp/blob/main/docs/connectors/database.md>).
+
+### How is auth handled?
 
 OAuth2 (PKCE + Client Credentials), Bearer Token, API Key, Basic Auth, query-parameter auth and HMAC request signing are supported, and SOAP connectors can send a WS-Security UsernameToken (PasswordText or PasswordDigest). Signed or encrypted WS-Security messages and TLS client certificates are not implemented yet. Credentials are stored AES-256-GCM encrypted at rest. Per-user MCP API keys are issued on top so each AI client gets its own key with usage tracking.
 

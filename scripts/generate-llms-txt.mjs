@@ -114,7 +114,8 @@ export function cleanMarkdown(markdown, source) {
   text = text.replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<(picture|p|div|table)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
     .replace(/<img\b[^>]*\/?\s*>/gi, '')
-    .replace(/^\s*<\/?(?:details|summary)\b[^>]*>.*$/gm, '')
+    .replace(/<summary\b[^>]*>([\s\S]*?)<\/summary>/gi, (_, title) => `### ${plain(title)}\n`)
+    .replace(/<\/?details\b[^>]*>/gi, '')
     .replace(/<\/?(?:a|strong|em|b|i|code|pre|br|hr|h[1-6]|span|source)\b[^>]*>/gi, '');
   return rewriteLinks(text, source).replace(/\n{3,}/g, '\n\n').trim();
 }
