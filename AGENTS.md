@@ -1,6 +1,7 @@
 # Agent instructions
 
 Read [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) before making changes.
+After changing docs, run `node scripts/generate-llms-txt.mjs` and commit the generated files.
 Never add or change code under any `ee/` directory: it uses the AnythingMCP
 Commercial License; use AGPL-3.0-only for the rest of the repository.
 Read [LICENSING.md](LICENSING.md), [the EE README](packages/backend/src/ee/README.md),
