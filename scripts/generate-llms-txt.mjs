@@ -32,6 +32,65 @@ const DESCRIPTIONS = {
   'AGENTS.md': 'Repository instructions, setup commands, tests, and contribution boundaries for coding agents.',
 };
 
+// Hide code while rendering prose, then restore it verbatim. This keeps HTML
+// snippets, Markdown examples, and significant blank lines out of the renderer.
+function protectCode(markdown) {
+  let prefix = '\u0000AMCP_CODE_';
+  while (markdown.includes(prefix)) prefix += '_';
+  const snippets = [];
+  const save = text => `${prefix}${snippets.push(text) - 1}\u0000`;
+  let text = '';
+  let cursor = 0;
+  let offset = 0;
+  let fence;
+  for (const line of markdown.split(/(?<=\n)/)) {
+    const content = line.replace(/\r?\n$/, '');
+    if (fence) {
+      const close = content.match(/^[ \t]*(`+|~+)[ \t]*$/);
+      if (close && close[1][0] === fence.marker && close[1].length >= fence.length) {
+        text += markdown.slice(cursor, fence.start) + save(markdown.slice(fence.start, offset + line.length));
+        cursor = offset + line.length;
+        fence = undefined;
+      }
+    } else {
+      const open = content.match(/^[ \t]*(`{3,}|~{3,})(.*)$/);
+      if (open && (open[1][0] !== '`' || !open[2].includes('`'))) {
+        fence = { marker: open[1][0], length: open[1].length, start: offset };
+      }
+    }
+    offset += line.length;
+  }
+  text += fence ? markdown.slice(cursor, fence.start) + save(markdown.slice(fence.start)) : markdown.slice(cursor);
+  const runs = /`+/g;
+  let output = '';
+  cursor = 0;
+  let open;
+  while ((open = runs.exec(text))) {
+    if (escapedAt(text, open.index)) continue;
+    const closingRuns = /`+/g;
+    closingRuns.lastIndex = runs.lastIndex;
+    let close;
+    while ((close = closingRuns.exec(text)) && close[0].length !== open[0].length) { /* exact delimiter size */ }
+    if (!close) continue;
+    // Inline spans cannot cross a fenced block's boundary.
+    if (text.slice(open.index, closingRuns.lastIndex).includes(prefix)) continue;
+    output += text.slice(cursor, open.index) + save(text.slice(open.index, closingRuns.lastIndex));
+    cursor = closingRuns.lastIndex;
+    runs.lastIndex = cursor;
+  }
+  output += text.slice(cursor);
+  return {
+    text: output,
+    restore: rendered => rendered.replace(new RegExp(`${prefix}(\\d+)\u0000`, 'g'), (_, index) => snippets[Number(index)]),
+  };
+}
+
+function escapedAt(text, index) {
+  let backslashes = 0;
+  while (index > 0 && text[--index] === '\\') backslashes++;
+  return backslashes % 2 === 1;
+}
+
 // Render the HTML used by our Markdown docs without treating literal MCP
 // placeholders or URL autolinks as tags. Block contents are intentionally
 // omitted; details/summary wrappers retain the useful FAQ text.
@@ -42,7 +101,7 @@ function renderHtml(text, inline = false) {
   const stack = [];
   let output = '';
   let cursor = 0;
-  for (const match of text.matchAll(/<!--[\s\S]*?-->|<\/?[a-z][^<>]*>/gi)) {
+  for (const match of text.matchAll(/<!--[\s\S]*?-->|<\/?[a-z](?:[^<>"']|"[^"]*"|'[^']*')*>/gi)) {
     if (!stack.length) output += text.slice(cursor, match.index);
     cursor = match.index + match[0].length;
     if (match[0].startsWith('<!--')) continue;
@@ -93,13 +152,18 @@ export function absoluteLink(target, source) {
 // Scan balanced labels/destinations, including linked badges and URLs with
 // parentheses. Keep optional link titles and reference-link definitions.
 export function rewriteLinks(markdown, source) {
+  const code = protectCode(markdown);
+  return code.restore(rewriteProseLinks(code.text, source));
+}
+
+function rewriteProseLinks(markdown, source) {
   const text = markdown.replace(/^( {0,3}\[[^\]\n]+\]:\s*)(<[^>]+>|\S+)(.*)$/gm,
     (_, prefix, url, suffix) => `${prefix}<${absoluteLink(url.replace(/^<|>$/g, ''), source)}>${suffix}`);
   let output = '';
   for (let i = 0; i < text.length;) {
     const image = text[i] === '!' && text[i + 1] === '[';
     const start = i + (image ? 1 : 0);
-    if (text[start] !== '[' || (i > 0 && text[i - 1] === '\\')) { output += text[i++]; continue; }
+    if (text[start] !== '[' || escapedAt(text, i)) { output += text[i++]; continue; }
     let end = start + 1;
     let depth = 1;
     for (; end < text.length && depth; end++) {
@@ -112,15 +176,23 @@ export function rewriteLinks(markdown, source) {
     if (text[end] === '(') {
       let close = end + 1;
       depth = 1;
+      let quote;
+      let angle = false;
       for (; close < text.length && depth; close++) {
         if (text[close] === '\\') { close++; continue; }
+        if (angle) { if (text[close] === '>') angle = false; continue; }
+        if (quote) { if (text[close] === quote) quote = undefined; continue; }
+        if (text[close] === '<' && depth === 1) { angle = true; continue; }
+        if ((text[close] === '"' || text[close] === "'") && depth === 1 && /\s/.test(text[close - 1])) {
+          quote = text[close]; continue;
+        }
         if (text[close] === '(') depth++;
         if (text[close] === ')') depth--;
       }
       if (depth) { output += text[i++]; continue; }
-      const destination = text.slice(end + 1, close - 1).match(/^\s*(<[^>]*>|\S+?)(\s+["'][\s\S]*["'])?\s*$/);
+      const destination = text.slice(end + 1, close - 1).match(/^\s*(<[^>]*>|\S+?)(\s+(?:"[\s\S]*"|'[\s\S]*'|\([\s\S]*\)))?\s*$/);
       if (!destination) { output += text[i++]; continue; }
-      const cleanedLabel = rewriteLinks(label, source);
+      const cleanedLabel = rewriteProseLinks(label, source);
       if (!image && cleanedLabel.trim()) {
         const url = absoluteLink(destination[1].replace(/^<|>$/g, ''), source);
         output += `[${cleanedLabel}](<${url}>${destination[2] || ''})`;
@@ -135,14 +207,15 @@ export function rewriteLinks(markdown, source) {
 }
 
 export function cleanMarkdown(markdown, source) {
-  let text = markdown.replace(/\r\n?/g, '\n');
+  const code = protectCode(markdown.replace(/\r\n?/g, '\n'));
+  let text = code.text;
   if (source === 'README.md') {
     text = text.replace(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi, (_, title) => `# ${plain(title)}\n`)
       .replace(/<p\b[^>]*>\s*<strong>(AnythingMCP[\s\S]*?)<\/strong>[\s\S]*?<\/p>/i,
         (_, summary) => `${plain(summary)}\n`);
   }
   text = renderHtml(text);
-  return rewriteLinks(text, source).replace(/\n{3,}/g, '\n\n').trim();
+  return code.restore(rewriteProseLinks(text, source).replace(/\n{3,}/g, '\n\n').trim());
 }
 
 function metadata(content, path) {

@@ -50,7 +50,27 @@ test('full text has no images or relative inline/reference Markdown links', () =
   assert.match(full, /# AnythingMCP: self-hosted MCP gateway/);
   assert.match(full, /AnythingMCP is an open-source, self-hosted MCP gateway/);
   assert.match(full, /### How do I create a custom connector for Claude\?/);
+  assert.ok(full.includes('CREATE USER AMCP_READER PASSWORD "<strong password>"'));
+  assert.ok(full.includes('filter=userName eq "<a random guid>"'));
+  assert.ok(full.includes('<wsse:Security><!-- redacted --></wsse:Security>'));
   assert.doesNotMatch(full, /star-history\.com|badges\/banner\.png/);
+});
+
+test('retains existing fenced examples verbatim across the selected repository docs', () => {
+  let examples = 0;
+  for (const { paths } of collectDocuments()) {
+    for (const path of paths) {
+      const source = readFileSync(resolve(ROOT, path), 'utf8').replace(/\r\n?/g, '\n');
+      const rendered = cleanMarkdown(source, path);
+      // An independent extraction checks the real examples, in addition to
+      // the synthetic delimiter edge cases below.
+      for (const [block] of source.matchAll(/^([ \t]*)(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1\2[ \t]*$/gm)) {
+        assert.ok(rendered.includes(block), `Changed code example in ${path}: ${block.slice(0, 80)}`);
+        examples++;
+      }
+    }
+  }
+  assert.ok(examples > 50, `Audited ${examples} fenced examples`);
 });
 
 test('rewrites fragments, nested paths, reference links and balanced destinations', () => {
@@ -65,6 +85,9 @@ test('rewrites fragments, nested paths, reference links and balanced destination
   assert.ok(result.includes(`[Guide](<${github}docs/guide_(new).md#intro>)`));
   assert.ok(result.includes(`[ref]: <${github}README.md#setup> "README"`));
   assert.ok(result.includes('[Email](<mailto:test@example.com>)'));
+  const titled = rewriteLinks('[Draft](<../guide_(draft.md> "Notes (draft")', source);
+  assert.equal(titled, `[Draft](<${github}docs/guide_(draft.md> "Notes (draft")`);
+  assert.equal(rewriteLinks('[API](../api.md (Reference))', source), `[API](<${github}docs/api.md> (Reference))`);
 });
 
 test('removes linked/reference images and HTML blocks without losing text or placeholders', () => {
@@ -81,6 +104,26 @@ test('removes linked/reference images and HTML blocks without losing text or pla
   assert.ok(output.includes('### More'));
   assert.ok(output.includes('/mcp/<serverId>'));
   assert.ok(output.includes('<https://example.com>'));
+});
+
+test('preserves fenced and inline code instead of interpreting examples as HTML or links', () => {
+  const samples = [
+    '```html\n<p>Keep this exact code example.</p>\n\n\n<div>Still code.</div>\n```',
+    '~~~markdown\n[Example](../README.md)\n[ref]: ../example.md\n~~~',
+    '````markdown\n```html\n<p>Nested fence example</p>\n```\n`````',
+    '```html\n<p>An unclosed fence is still a code block.</p>',
+    '`handlers[index](value)` and ``a `literal` [link](../file.md)``',
+    '`unmatched opener\n\n```html\n<p>Still a fenced example.</p>\n```\n\nafter`',
+  ];
+  for (const sample of samples) {
+    assert.equal(cleanMarkdown(sample, 'docs/example.md'), sample);
+    assert.equal(rewriteLinks(sample, 'docs/example.md'), sample);
+  }
+  const mixed = 'Use `[example](../README.md)` or [the README](../README.md).';
+  const output = cleanMarkdown(mixed, 'docs/example.md');
+  assert.ok(output.includes('`[example](../README.md)`'));
+  assert.ok(output.includes('[the README](<https://github.com/HelpCode-ai/anythingmcp/blob/main/README.md>)'));
+  assert.equal(cleanMarkdown('Before <img alt="a > b" src="logo.svg"> after', 'docs/example.md'), 'Before  after');
 });
 
 test('CLI resolves its own root, detects changed or missing output, and regenerates deterministically', t => {
@@ -113,6 +156,10 @@ test('CLI resolves its own root, detects changed or missing output, and regenera
   assert.ok(expanded.indexOf('aaa-new.md') < expanded.indexOf('docs/connectors/database.md'));
   assert.ok(expanded.includes(': A newly added connector guide.'));
   assert.equal(run('--check').status, 0);
+  writeFileSync(resolve(fixture, 'docs/connectors/title.md'), '# A [label] \\path &amp;lt;iframe&gt;\n\nA title with special characters.\n');
+  assert.equal(run().status, 0);
+  const titled = readFileSync(resolve(fixture, 'llms.txt'), 'utf8');
+  assert.ok(titled.includes('A \\[label\\] \\\\path &lt;iframe>'));
   // Byte checks also reject CRLF artifacts rather than silently accepting drift.
   const index = resolve(fixture, 'llms.txt');
   writeFileSync(index, readFileSync(index, 'utf8').replace(/\n/g, '\r\n'));

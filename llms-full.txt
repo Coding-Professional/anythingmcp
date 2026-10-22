@@ -2441,7 +2441,7 @@ Install it from the catalog (Connectors → Marketplace → *SAP S/4HANA (HANA S
 In the tenant that holds the ABAP schema:
 
 ```sql
-CREATE USER AMCP_READER PASSWORD "" NO FORCE_FIRST_PASSWORD_CHANGE;
+CREATE USER AMCP_READER PASSWORD "<strong password>" NO FORCE_FIRST_PASSWORD_CHANGE;
 ALTER USER AMCP_READER DISABLE PASSWORD LIFETIME;
 
 -- dictionary tools
@@ -2773,7 +2773,7 @@ Choose **WS-Security (UsernameToken)** in the connector's authentication setting
 | `includeNonce` | `true` adds the Nonce and Created elements to a `PasswordText` token, for services that require them. `PasswordDigest` always has them |
 | `includeTimestamp` | `true` adds a `wsu:Timestamp` valid for five minutes |
 
-The header carries `soapenv:mustUnderstand="1"`. `PasswordDigest` and the timestamp use the backend's clock, so a service that checks freshness needs it to be accurate. When a call fails, the request returned in the error detail (to the AI client and in the tool test) shows `<wsse:Security></wsse:Security>` in place of the header, and a Security block echoed in the service's response is redacted the same way.
+The header carries `soapenv:mustUnderstand="1"`. `PasswordDigest` and the timestamp use the backend's clock, so a service that checks freshness needs it to be accurate. When a call fails, the request returned in the error detail (to the AI client and in the tool test) shows `<wsse:Security><!-- redacted --></wsse:Security>` in place of the header, and a Security block echoed in the service's response is redacted the same way.
 
 > **Not implemented yet:** signed or encrypted WS-Security messages (X.509 tokens, XML Signature, XML Encryption) and TLS client certificates. The `CERTIFICATE` auth type exists in the data model, but the SOAP engine sends no client certificate, so a service that requires one will reject the call.
 
@@ -6007,7 +6007,7 @@ ID** and *Current cycle status: Initial sync paused*. That is the expected
 state — nothing has been provisioned yet.
 
 **What Test connection does on the wire:** a single
-`GET /api/scim/v2/Users?filter=userName eq ""`. AnythingMCP
+`GET /api/scim/v2/Users?filter=userName eq "<a random guid>"`. AnythingMCP
 answers `200` with an empty `ListResponse`, which is what Entra wants to see.
 
 ---
