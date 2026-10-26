@@ -61,7 +61,7 @@ export type ToolResultContent = [
   )[],
 ];
 import { ResponseBodyError } from '../connectors/engines/response-error.util';
-import { isMaskedEnvVar, secretContext } from '../connectors/connector-secrets.util';
+import { connectorSecretValues } from '../connectors/connector-secrets.util';
 import { redactSecretsDeep } from '../common/secret-literals.util';
 import { withTokenRenewal } from '../connectors/engines/bearer-token-renewal.service';
 
@@ -199,18 +199,12 @@ export class DynamicMcpTools {
    * replacing a 3-character string everywhere in a response would mangle it.
    */
   private connectorSecretValues(tool: RegisteredTool): string[] {
-    const envVars = tool.connectorConfig?.envVars;
-    if (!envVars || typeof envVars !== 'object') return [];
-    const ctx = secretContext({
+    if (!tool.connectorConfig) return [];
+    return connectorSecretValues({
+      envVars: tool.connectorConfig.envVars,
       config: tool.connectorConfig.config,
       headers: tool.connectorConfig.headers,
     });
-    return Object.entries(envVars)
-      .filter(
-        ([name, value]) =>
-          typeof value === 'string' && value.length >= 8 && isMaskedEnvVar(name, value, ctx),
-      )
-      .map(([, value]) => value as string);
   }
 
   private async getProxyLimit(organizationId: string): Promise<number> {
@@ -418,6 +412,8 @@ export class DynamicMcpTools {
           ? undefined
           : tool.connectorId,
         errorWhen: connectorErrorWhen(tool.connectorConfig.config),
+        // Masked in the engines' log lines (a bot token in the URL path).
+        logSecrets: secretValues,
         ...(proxyUrl ? { proxyUrl } : {}),
       };
 
@@ -491,6 +487,55 @@ export class DynamicMcpTools {
         processGauges.dec('toolCallsInFlight');
       }
       const { body: upstreamResult, meta } = engineOut;
+      if (
+        tool.connectorType === 'MCP' &&
+        typeof upstreamResult === 'object' &&
+        upstreamResult !== null &&
+        'isError' in upstreamResult &&
+        upstreamResult.isError === true &&
+        'content' in upstreamResult &&
+        Array.isArray(upstreamResult.content)
+      ) {
+        const safeText = redactSecretsDeep(
+          upstreamResult.content
+            .filter((item) => item?.type === 'text' && typeof item.text === 'string')
+            .map((item) => item.text)
+            .join('\n'),
+          secretValues,
+        );
+        const errorResult: { content: ToolResultContent; isError: true } = {
+          content: [{ type: 'text', text: safeText }],
+          isError: true,
+        };
+        const durationMs = Date.now() - startTime;
+        await this.auditService.logInvocation({
+          toolId: tool.id,
+          userId: context?.userId,
+          userEmail: context?.userEmail,
+          mcpServerId: context?.mcpServerId,
+          organizationId: context?.organizationId,
+          connectorId: tool.connectorId,
+          usedProxy,
+          intent: context?.intent,
+          learnable: context?.learnable ?? false,
+          input: params,
+          output: errorResult,
+          status: 'ERROR',
+          durationMs,
+          error: this.formatStoredError({
+            error: 'MCP tool returned isError: true',
+            responseBody: safeText,
+          }),
+          clientInfo: context ? JSON.stringify({
+            authMethod: context.authMethod,
+            apiKeyName: context.apiKeyName,
+            userEmail: context.userEmail,
+            mcpServerName: context.mcpServerName,
+          }) : undefined,
+        });
+        this.logToolCall(tool, context, durationMs, 'ERROR');
+        return errorResult;
+      }
       // An API that echoes the request (a URL with the bot token in it) must
       // not hand the connector's own credentials to the client, the cache or
       // the log. Only those values are replaced, and the response is copied

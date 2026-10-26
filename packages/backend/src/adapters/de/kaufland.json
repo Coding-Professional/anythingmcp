@@ -107,6 +107,11 @@
           },
           "embedded": {
             "type": "string",
+            "enum": [
+              "order_invoices",
+              "delivery",
+              "kss_delivery"
+            ],
             "description": "One extra object to include: order_invoices, delivery or kss_delivery. Order units are always included."
           }
         },
@@ -213,7 +218,8 @@
           },
           "limit": {
             "type": "number",
-            "description": "Rows per page (max 100)."
+            "maximum": 30,
+            "description": "Rows per page (max 30)."
           },
           "offset": {
             "type": "number",
