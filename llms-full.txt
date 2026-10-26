@@ -608,6 +608,7 @@ curl -s http://localhost:4000/api/mcp-api-keys \
 | `MCP_API_KEY` | No | API key for legacy MCP auth |
 | `SERVER_URL` | No | Server URL for OAuth2 metadata (default: `http://localhost:4000`) |
 | `MCP_RATE_LIMIT_PER_MINUTE` | No | Rate limit per client (default: 60) |
+| `TOOL_MAX_RESPONSE_BYTES` | No | Largest upstream response body, in bytes after decompression, that one tool call reads from a REST, JSON-RPC, OData, GraphQL or SOAP API (default: `10485760`, 10 MB, on Cloud and self-hosted). A bigger response fails the call with code `TOOL_RESPONSE_TOO_LARGE` and a message that asks the model to narrow the request |
 | `SMTP_HOST` | No | SMTP server for instance emails; used when no SMTP is configured in the admin Settings page |
 | `SMTP_PORT` | No | SMTP port (default: 587) |
 | `SMTP_SECURE` | No | `true` for implicit TLS (default: `false`; always on for port 465) |
@@ -3523,7 +3524,7 @@ the API actually returned.
 | `select` | Output template: keys are output names, leaves are paths (`$.a.b[*].c`) or literals |
 | `expression` | JMESPath expression, for reshaping a template cannot express |
 | `fallbackToRaw` | On error, return the raw response instead of failing. Default `true` |
-| `maxBytes` | Hard cap on the serialized output. `0` or absent means no cap |
+| `maxBytes` | Hard cap on the serialized output. `0` or absent means no cap. It shapes a response that was read; the instance-wide `TOOL_MAX_RESPONSE_BYTES` (10 MB by default) decides whether the upstream body is read at all |
 | `cacheTtl` | Seconds to cache the **raw** upstream response; shaping happens on read |
 | `images` | Paths to base64 images in the response, returned to the client as MCP image content (see below) |
 | `binary` | How a file the API returns as raw bytes is handed over: `{ "as": "auto" \| "base64", "maxBytes": n }` (see below) |
@@ -3590,7 +3591,9 @@ file. Neither the call log nor the dashboard's tool test stores the bytes.
 ```
 
 - `maxBytes` per file: 4 MiB by default, at most 10 MiB. A larger file is
-  described and not attached.
+  described and not attached. A response body over `TOOL_MAX_RESPONSE_BYTES`
+  (10 MB by default) is not read at all: the call fails with code
+  `TOOL_RESPONSE_TOO_LARGE`.
 - `as: "base64"` puts the base64 into the text (`file.base64`) instead of
   attaching it, for a workflow that hands the file on to another tool.
 - Both keys are optional. A tool without `binary` gets the defaults.
@@ -4902,7 +4905,7 @@ Backend (`@sentry/nestjs`) auto-instruments http/express/prisma. `SentryGlobalFi
 
 Frontend (`@sentry/nextjs`) wires browser / server / edge runtimes; `error.tsx`, `global-error.tsx` and `onRequestError` report what reaches them. Browser events are sent to `/monitoring` on the same origin and forwarded to Sentry, so ad blockers do not drop them; put that path behind a reverse proxy that does not forward the client address (see `deploy/cloud/Caddyfile`).
 
-What leaves the process is an allowlist (`packages/backend/src/common/sentry-scrub.ts`, `packages/frontend/src/lib/sentry-scrub.ts`): request method, URL without query string or fragment, and the `user-agent` header. No request bodies (MCP tool arguments), cookies, query strings (OAuth codes, invitation and reset tokens), fragments (licence keys), IP addresses or user. Outgoing HTTP breadcrumbs and spans lose their query string, where some upstream APIs take their key; console breadcrumbs are dropped. Session replay is off.
+What leaves the process is an allowlist (`packages/backend/src/common/sentry-scrub.ts`, `packages/frontend/src/lib/sentry-scrub.ts`): request method, URL without query string or fragment, and the `user-agent` header. No request bodies (MCP tool arguments), cookies, query strings (OAuth codes, invitation and reset tokens), fragments (licence keys), IP addresses or user. Outgoing HTTP breadcrumbs and spans lose their query string, where some upstream APIs take their key; console breadcrumbs are dropped. Spans carry no MCP tool arguments or results and no AI prompts: the SDK's `dataCollection` option turns every such category off, and the scrubbers drop those span attributes as a second line of defence. Session replay is off.
 
 | Env | Default | Purpose |
 |---|---|---|
@@ -7279,7 +7282,7 @@ Follow nested `AGENTS.md` instructions within their folders; leave
 
 ## Setup
 
-Use Node.js >= 22.12 (root `package.json`), npm >= 9, and Docker with Compose.
+Use Node.js >= 22.15 (root `package.json`), npm >= 9, and Docker with Compose.
 Run the interactive setup from the repository root:
 
 ```bash
