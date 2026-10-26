@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Repository documentation for AI clients. No runtime or website output.
-import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, posix, resolve } from 'node:path';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, posix, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -137,15 +137,49 @@ function plain(text) {
     .replace(/\s+/g, ' ').trim();
 }
 
+// The repository root may have an OS alias (/var on macOS), but inputs below
+// it must be ordinary files/directories, never links to local private content.
+function repositoryPath(root, path, kind = 'file', allowMissing = false) {
+  const base = realpathSync(root);
+  const target = resolve(base, path);
+  const prefix = base + sep;
+  if (!target.startsWith(prefix)) throw new Error(`Refusing path outside the repository: ${path}`);
+  let current = base;
+  let stat;
+  for (const part of relative(base, target).split(sep)) {
+    current = resolve(current, part);
+    try {
+      stat = lstatSync(current);
+    } catch (error) {
+      if (allowMissing && current === target && error.code === 'ENOENT') return target;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) throw new Error(`Refusing symbolic link in repository path: ${path}`);
+  }
+  const canonical = realpathSync(target);
+  if (!canonical.startsWith(prefix)) throw new Error(`Refusing path outside the repository: ${path}`);
+  if (kind === 'directory' ? !stat.isDirectory() : !stat.isFile()) {
+    throw new Error(`Expected a regular ${kind} in repository path: ${path}`);
+  }
+  return canonical;
+}
+
 export function collectDocuments(root = ROOT) {
   return SECTIONS.map(([title, patterns]) => ({
     title,
     paths: patterns.flatMap(pattern => {
-      if (!pattern.includes('*')) return [pattern];
+      if (!pattern.includes('*')) {
+        repositoryPath(root, pattern);
+        return [pattern];
+      }
       const dir = posix.dirname(pattern);
-      return readdirSync(resolve(root, dir), { withFileTypes: true })
-        .filter(entry => entry.isFile() && entry.name.endsWith('.md'))
-        .map(entry => `${dir}/${entry.name}`).sort();
+      const paths = [];
+      for (const entry of readdirSync(repositoryPath(root, dir, 'directory'), { withFileTypes: true })) {
+        const path = `${dir}/${entry.name}`;
+        repositoryPath(root, path, entry.isDirectory() ? 'directory' : 'file');
+        if (entry.isFile() && entry.name.endsWith('.md')) paths.push(path);
+      }
+      return paths.sort();
     }).filter(path => !EXCLUDED_DOCS.includes(path)),
   }));
 }
@@ -240,14 +274,14 @@ function metadata(content, path) {
 }
 
 export function generate(root = ROOT) {
-  const summary = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).description;
+  const summary = JSON.parse(readFileSync(repositoryPath(root, 'package.json'), 'utf8')).description;
   const header = `# AnythingMCP\n\n> ${summary}\n`;
   let index = header;
   let full = header;
   for (const section of collectDocuments(root)) {
     index += `\n## ${section.title}\n\n`;
     for (const path of section.paths) {
-      const content = cleanMarkdown(readFileSync(resolve(root, path), 'utf8'), path);
+      const content = cleanMarkdown(readFileSync(repositoryPath(root, path), 'utf8'), path);
       const { title, description } = metadata(content, path);
       index += `- [${title}](${RAW}${path}): ${description}\n`;
       full += `\n---\n\n## ${path}\n\nSource: ${RAW}${path}\n\n${content}\n`;
@@ -260,8 +294,9 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   try {
     if (process.argv.slice(2).some(arg => arg !== '--check')) throw new Error('Usage: node scripts/generate-llms-txt.mjs [--check]');
     const check = process.argv.includes('--check');
-    for (const [name, content] of Object.entries(generate())) {
-      const path = resolve(ROOT, name);
+    const outputs = Object.entries(generate()).map(([name, content]) =>
+      [name, content, repositoryPath(ROOT, name, 'file', true)]);
+    for (const [name, content, path] of outputs) {
       if (check) {
         if (!existsSync(path) || readFileSync(path, 'utf8') !== content) {
           console.error(`${name} is stale. Run node scripts/generate-llms-txt.mjs and commit the result.`);

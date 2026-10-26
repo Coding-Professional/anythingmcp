@@ -194,6 +194,8 @@ Open an issue before starting work on:
 1. **Update documentation** if your change affects user-facing behavior.
    After changing docs, run `node scripts/generate-llms-txt.mjs` from the root
    and commit the generated files.
+   Keep sources inside the repository; the generator rejects symlinked inputs
+   and output files.
 2. **Add tests** for new functionality
 3. **Ensure all tests pass** (`npm test`)
 4. **Keep PRs focused** — one feature or fix per PR

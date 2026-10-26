@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
@@ -19,6 +19,112 @@ function createFixture(t) {
   }
   return fixture;
 }
+
+const PRIVATE_MARKER = 'synthetic-private-content-not-for-the-bundle';
+
+function linkInput(t, target, path, directory = false) {
+  try {
+    symlinkSync(target, path, directory ? (process.platform === 'win32' ? 'junction' : 'dir') : 'file');
+    return true;
+  } catch (error) {
+    if (process.platform === 'win32' && !directory && error.code === 'EPERM') {
+      t.skip('File symlinks require Windows privileges; directory junctions are tested separately');
+      return false;
+    }
+    throw error;
+  }
+}
+
+function replaceWithLink(t, fixture, path, target, directory = false) {
+  const input = resolve(fixture, path);
+  const saved = resolve(fixture, `saved-${path.replaceAll('/', '-')}`);
+  assert.ok(input.startsWith(fixture + sep) && saved.startsWith(fixture + sep));
+  renameSync(input, saved);
+  return linkInput(t, target || saved, input, directory);
+}
+
+function prepareOutputs(fixture) {
+  const outputs = generate(fixture);
+  for (const [name, content] of Object.entries(outputs)) writeFileSync(resolve(fixture, name), content);
+  return outputs;
+}
+
+function assertRejectedInput(fixture, outputs) {
+  assert.throws(() => generate(fixture), /Refusing.*(?:symbolic link|outside.*repository)/i);
+  for (const args of [[], ['--check']]) {
+    const result = spawnSync(process.execPath, [resolve(fixture, 'scripts/generate-llms-txt.mjs'), ...args],
+      { cwd: tmpdir(), encoding: 'utf8' });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Refusing.*(?:symbolic link|outside.*repository)/i);
+    assert.ok(!(result.stdout + result.stderr).includes(PRIVATE_MARKER));
+    for (const [name, content] of Object.entries(outputs)) {
+      assert.equal(readFileSync(resolve(fixture, name), 'utf8'), content, `${name} must not be rewritten`);
+    }
+  }
+}
+
+test('rejects a fixed doc symlink to a private file inside the repository', t => {
+  const fixture = createFixture(t);
+  const outputs = prepareOutputs(fixture);
+  const target = resolve(fixture, '.env');
+  writeFileSync(target, PRIVATE_MARKER);
+  if (!replaceWithLink(t, fixture, 'docs/sso.md', target)) return;
+  assertRejectedInput(fixture, outputs);
+});
+
+test('rejects a symlinked scanned folder pointing outside the repository', t => {
+  const fixture = createFixture(t);
+  const outputs = prepareOutputs(fixture);
+  // A sibling sharing the repository prefix must not pass a containment check.
+  const outside = mkdtempSync(fixture + '-outside-');
+  assert.equal(dirname(outside), dirname(fixture));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFileSync(resolve(outside, 'private.md'), PRIVATE_MARKER);
+  if (!replaceWithLink(t, fixture, 'docs/integrations', outside, true)) return;
+  assertRejectedInput(fixture, outputs);
+});
+
+test('rejects symlinked parents of fixed docs even when the target stays inside the repository', t => {
+  const fixture = createFixture(t);
+  const outputs = prepareOutputs(fixture);
+  if (!replaceWithLink(t, fixture, 'docs', undefined, true)) return;
+  assertRejectedInput(fixture, outputs);
+});
+
+test('rejects symlinked files in scanned folders instead of silently skipping them', t => {
+  const fixture = createFixture(t);
+  const outputs = prepareOutputs(fixture);
+  const target = resolve(fixture, '.env');
+  writeFileSync(target, PRIVATE_MARKER);
+  if (!linkInput(t, target, resolve(fixture, 'docs/integrations/private.md'))) return;
+  assertRejectedInput(fixture, outputs);
+});
+
+test('rejects symlinked package metadata before reading the summary', t => {
+  const fixture = createFixture(t);
+  const outputs = prepareOutputs(fixture);
+  const target = resolve(fixture, 'private-package.json');
+  writeFileSync(target, JSON.stringify({ description: PRIVATE_MARKER }));
+  if (!replaceWithLink(t, fixture, 'package.json', target)) return;
+  assertRejectedInput(fixture, outputs);
+});
+
+test('refuses linked output files without overwriting their targets or the other output', t => {
+  const fixture = createFixture(t);
+  const outputs = prepareOutputs(fixture);
+  const target = resolve(fixture, '.env');
+  writeFileSync(target, PRIVATE_MARKER);
+  if (!replaceWithLink(t, fixture, 'llms-full.txt', target)) return;
+  for (const args of [[], ['--check']]) {
+    const result = spawnSync(process.execPath, [resolve(fixture, 'scripts/generate-llms-txt.mjs'), ...args],
+      { cwd: tmpdir(), encoding: 'utf8' });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Refusing symbolic link/);
+    assert.ok(!(result.stdout + result.stderr).includes(PRIVATE_MARKER));
+    assert.equal(readFileSync(target, 'utf8'), PRIVATE_MARKER);
+    assert.equal(readFileSync(resolve(fixture, 'llms.txt'), 'utf8'), outputs['llms.txt']);
+  }
+});
 
 function assertDocsCovered(root) {
   const scan = dir => readdirSync(resolve(root, dir), { withFileTypes: true }).flatMap(entry => {
